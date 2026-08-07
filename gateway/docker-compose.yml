@@ -1,0 +1,25 @@
+# Local-only Redis for gateway development.
+#
+#   docker compose up -d redis   # start
+#   docker compose down          # stop
+#   docker compose down -v       # stop + wipe volume
+#
+# Prod Redis runs on Fly (same-box) — this file is not shipped.
+
+services:
+  redis:
+    image: valkey/valkey:8-alpine  # BSD-3 Redis fork — redis:7.4+ is RSALv2/SSPL, unshippable in the self-host bundle
+    container_name: plexus-gateway-redis
+    command: >
+      valkey-server
+      --appendonly yes
+      --dir /data
+    ports:
+      - "6379:6379"
+    volumes:
+      - ./data:/data
+    healthcheck:
+      test: ["CMD", "valkey-cli", "ping"]
+      interval: 5s
+      timeout: 2s
+      retries: 5

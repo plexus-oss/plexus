@@ -1,0 +1,26 @@
+# Local dev Postgres for the de-Supabase work (Track C). The app's control-plane
+# DB — telemetry lives in (remote) ClickHouse, video in Tigris — so it's small.
+#
+# Ephemeral by design: no volume, so data lives only in the container. `db:down`
+# (docker compose stop) keeps it across a stop/start; a full `docker compose down`
+# wipes it — just re-seed. Don't drive this directly: run `npm run db:up`
+# (scripts/db/up.sh).
+#
+# Pinned to 17 to match the source: Supabase is on Postgres 17. The seed's
+# pg_dump must be >= the source major, so the host needs a v17 client too
+# (brew install postgresql@17). Bump both if the source moves to a newer major.
+services:
+  postgres:
+    image: pgvector/pgvector:pg17
+    container_name: plexus-postgres
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: plexus
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d plexus"]
+      interval: 3s
+      timeout: 2s
+      retries: 15

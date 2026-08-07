@@ -1,0 +1,63 @@
+<!-- ⚠️ CREDENTIAL ROTATION REQUIRED ON NEXT DEPLOY ⚠️
+     This file used to ship hardcoded password_sha256_hex values for all three
+     users. Those hashes were committed to git history and are BURNED — treat
+     the old passwords as public. When this env-driven version deploys, rotate
+     every ClickHouse password and update the dependent secrets in the same
+     window (frontend PLEXUS_CLICKHOUSE_PASSWORD, loader CH_PASSWORD, api
+     CLICKHOUSE_PASSWORD). Checklist: README.md → "Credentials".
+
+     Hashes now come from the environment at server start:
+       CH_WRITER_PASSWORD_SHA256  — telemetry_writer
+       CH_READER_PASSWORD_SHA256  — nextjs_reader
+       CH_ADMIN_PASSWORD_SHA256   — admin
+     Generate: printf %s "$PASSWORD" | shasum -a 256 | cut -d' ' -f1   (macOS)
+               printf %s "$PASSWORD" | sha256sum | cut -d' ' -f1       (Linux) -->
+<clickhouse>
+  <users>
+    <default remove="true"/>
+
+    <telemetry_writer>
+      <password_sha256_hex from_env="CH_WRITER_PASSWORD_SHA256"/>
+      <!-- Committed value allows all sources so local compose works.
+           server/Dockerfile rewrites this to fdaa::/16 (Fly 6PN only) for
+           the Fly image so the writer is unreachable from public internet. -->
+      <networks><ip>0.0.0.0/0</ip></networks>
+      <access_management>0</access_management>
+    </telemetry_writer>
+
+    <nextjs_reader>
+      <password_sha256_hex from_env="CH_READER_PASSWORD_SHA256"/>
+      <!-- Publicly reachable via Fly edge; keep open until you scope to
+           specific egress IPs. -->
+      <networks><ip>0.0.0.0/0</ip><ip>::/0</ip></networks>
+      <profile>readonly</profile>
+      <access_management>0</access_management>
+    </nextjs_reader>
+
+    <!-- Human operator / schema author. Full read+write+DDL, reachable
+         from the public internet, can manage users and grants. Plaintext
+         lives in your password manager only — never commit it here. To
+         rotate: generate a new plaintext, sha256 it, update the
+         CH_ADMIN_PASSWORD_SHA256 secret, redeploy. -->
+    <admin>
+      <password_sha256_hex from_env="CH_ADMIN_PASSWORD_SHA256"/>
+      <networks><ip>0.0.0.0/0</ip><ip>::/0</ip></networks>
+      <access_management>1</access_management>
+    </admin>
+  </users>
+
+  <profiles>
+    <default>
+      <async_insert>0</async_insert>
+      <async_insert_busy_timeout_ms>500</async_insert_busy_timeout_ms>
+    </default>
+
+    <!-- readonly = 2 blocks data writes (INSERT/ALTER/DROP/CREATE) but
+         still lets the session change settings. readonly = 1 would also
+         block setting changes, which makes the ClickHouse /play web
+         console break (it sets add_http_cors_header on every query). -->
+    <readonly>
+      <readonly>2</readonly>
+    </readonly>
+  </profiles>
+</clickhouse>

@@ -1,0 +1,47 @@
+services:
+  clickhouse-keeper:
+    image: clickhouse/clickhouse-keeper:26.3.3.20-alpine
+    container_name: ch-keeper
+    hostname: ch-keeper
+    restart: unless-stopped
+    volumes:
+      - ./configs/keeper/keeper_config.xml:/etc/clickhouse-keeper/keeper_config.xml:ro
+      - keeper_data:/var/lib/clickhouse-keeper
+
+  clickhouse:
+    image: clickhouse/clickhouse-server:26.3.3.20
+    container_name: ch-01
+    hostname: ch-01
+    restart: unless-stopped
+    depends_on:
+      - clickhouse-keeper
+    volumes:
+      - ./configs/clickhouse/config.xml:/etc/clickhouse-server/config.d/config.xml:ro
+      - ./configs/clickhouse/users.xml:/etc/clickhouse-server/users.d/users.xml:ro
+      - ./configs/clickhouse/disks.xml:/etc/clickhouse-server/config.d/disks.xml:ro
+      - ch_data:/var/lib/clickhouse
+      - ch_logs:/var/log/clickhouse-server
+    environment:
+      # Referenced by config.xml via from_env=
+      - CH_REPLICATION_SECRET=${CH_REPLICATION_SECRET}
+      - CH_PASSWORD=${CH_PASSWORD}
+      # Referenced by users.xml via from_env= (password hashes; see .env.example)
+      - CH_WRITER_PASSWORD_SHA256=${CH_WRITER_PASSWORD_SHA256}
+      - CH_READER_PASSWORD_SHA256=${CH_READER_PASSWORD_SHA256}
+      - CH_ADMIN_PASSWORD_SHA256=${CH_ADMIN_PASSWORD_SHA256}
+      # Referenced by disks.xml via from_env=. On Fly these AWS_* names
+      # are auto-provisioned by `fly storage create`; for local compose
+      # set them in server/.env with Minio (or other) values.
+      # Leave blank if you only use storage_policy='default' locally.
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID:-}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY:-}
+      - CLICKHOUSE_S3_COLD_ENDPOINT=${CLICKHOUSE_S3_COLD_ENDPOINT:-}
+      - CLICKHOUSE_S3_BACKUP_ENDPOINT=${CLICKHOUSE_S3_BACKUP_ENDPOINT:-}
+    ports:
+      - "127.0.0.1:8123:8123"   # HTTP interface
+      - "127.0.0.1:9000:9000"   # Native protocol
+
+volumes:
+  ch_data:
+  ch_logs:
+  keeper_data:

@@ -1,0 +1,16 @@
+node_modules
+.next
+.git
+.claude
+.env*
+*.tsbuildinfo
+next-env.d.ts
+docker-compose.yml
+migration-plan.md
+DESIGN.md
+README.md
+coverage
+.vercel
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*

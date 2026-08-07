@@ -1,0 +1,1 @@
+ALTER TABLE "org_billing" ADD COLUMN "logo_url" text;

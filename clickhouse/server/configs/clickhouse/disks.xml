@@ -1,0 +1,63 @@
+<clickhouse>
+  <storage_configuration>
+    <disks>
+      <!-- Tigris cold storage: TTL-expired parts move here.
+           Lives under clickhouse/cold_storage/ inside the shared bucket;
+           endpoint URL carries the prefix so CH treats it as its own pool.
+           Create bucket: fly storage create plexus-ch
+           Credentials: AWS_ACCESS_KEY_ID + AWS_SECRET_ACCESS_KEY are
+           auto-provisioned as Fly secrets by `fly storage create`.
+           For local compose, set the same names in server/.env with
+           Minio (or other S3-compatible) values. -->
+      <s3_cold>
+        <type>s3</type>
+        <endpoint from_env="CLICKHOUSE_S3_COLD_ENDPOINT"/>
+        <access_key_id from_env="AWS_ACCESS_KEY_ID"/>
+        <secret_access_key from_env="AWS_SECRET_ACCESS_KEY"/>
+        <region>auto</region>
+        <metadata_path>/var/lib/clickhouse/disks/s3_cold/</metadata_path>
+      </s3_cold>
+
+      <!-- Tigris backup target: BACKUP TABLE writes land under
+           clickhouse/backups/ in the same bucket. Separate prefix so
+           bucket-level lifecycle rules can target it independently. -->
+      <s3_backup>
+        <type>s3</type>
+        <endpoint from_env="CLICKHOUSE_S3_BACKUP_ENDPOINT"/>
+        <access_key_id from_env="AWS_ACCESS_KEY_ID"/>
+        <secret_access_key from_env="AWS_SECRET_ACCESS_KEY"/>
+        <region>auto</region>
+        <metadata_path>/var/lib/clickhouse/disks/s3_backup/</metadata_path>
+      </s3_backup>
+    </disks>
+
+    <policies>
+      <!-- Tiered: hot (local SSD) → cold (Tigris S3) via TTL.
+           Reference this policy in CREATE TABLE: SETTINGS storage_policy = 'tiered' -->
+      <tiered>
+        <volumes>
+          <hot>
+            <disk>default</disk>
+          </hot>
+          <cold>
+            <disk>s3_cold</disk>
+          </cold>
+        </volumes>
+      </tiered>
+
+      <!-- S3-only policy for tables that should live entirely on Tigris
+           (e.g., long-retention rollup tables where local disk isn't needed) -->
+      <s3_only>
+        <volumes>
+          <main>
+            <disk>s3_cold</disk>
+          </main>
+        </volumes>
+      </s3_only>
+    </policies>
+  </storage_configuration>
+
+  <backups>
+    <allowed_disk>s3_backup</allowed_disk>
+  </backups>
+</clickhouse>

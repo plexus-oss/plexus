@@ -1,0 +1,30 @@
+# Secrets — never commit
+.env
+.env.*
+!.env.example
+!.env.deploy.example
+*.pem
+
+# Dependencies / build output
+node_modules/
+.next/
+dist/
+__pycache__/
+*.pyc
+.venv/
+venv/
+*.egg-info/
+
+# Compiled binaries
+gateway/gateway
+houston/alert-service
+
+# Local data dirs
+gateway/data/
+clickhouse/**/data/
+
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/
+*.swp

@@ -1,0 +1,1 @@
+ALTER TABLE "org_members" ADD COLUMN "allowed_satellite_ids" text[];

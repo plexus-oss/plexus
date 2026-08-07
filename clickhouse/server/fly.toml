@@ -1,0 +1,97 @@
+#
+# plexus-ch — ClickHouse server with embedded Keeper.
+#
+# ─── Network exposure ───────────────────────────────────────────────────
+#
+# Fly 6PN (private, IPv6 only):
+#   plexus-ch.internal:8123   HTTP   — loader and any other in-org consumer
+#   plexus-ch.internal:9000   native — clickhouse-client inside Fly
+#
+# Fly edge (public HTTPS with TLS terminated at the edge):
+#   https://plexus-ch.fly.dev/  →  internal 8123
+#
+# Auth split enforced by users.xml + Dockerfile:
+#   telemetry_writer  — locked to fdaa::/16 (6PN only, unreachable from edge)
+#   nextjs_reader     — open, reaches via HTTPS edge
+#
+# ─── First-time setup ───────────────────────────────────────────────────
+#   fly apps create plexus-ch
+#   fly volumes create plexus_ch_data --region iad --size 10 -a plexus-ch
+#
+#   # Secrets (set once; persisted in Fly, not in this file):
+#   fly secrets set -a plexus-ch \
+#       CH_PASSWORD='...'                     # plaintext for telemetry_writer
+#       CH_WRITER_PASSWORD_SHA256='...'       # sha256 of telemetry_writer plaintext
+#       CH_READER_PASSWORD_SHA256='...'       # sha256 of nextjs_reader plaintext
+#       CH_ADMIN_PASSWORD_SHA256='...'        # sha256 of admin plaintext
+#       CH_REPLICATION_SECRET='...'           # inter-node replication secret
+#       CLICKHOUSE_S3_ACCESS_KEY='...'        # Tigris access key
+#       CLICKHOUSE_S3_SECRET_KEY='...'        # Tigris secret key
+#
+#   fly deploy -c server/fly.toml
+#
+# After the first deploy, apply the schema manually:
+#   fly proxy 8123 -a plexus-ch
+#   clickhouse-client --host=127.0.0.1 --user=telemetry_writer --password \
+#       --multiquery < server/schema.sql
+#
+
+app = "plexus-ch"
+primary_region = "iad"
+
+[build]
+  dockerfile = "Dockerfile"
+
+# ── Storage ─────────────────────────────────────────────────────────────
+# 10 GB hot tier is generous at current ingest (~186k rows = ~10 MB on
+# disk). Extend with `fly volumes extend vol_... --size 80` when the
+# real ingest rate starts filling the 7-day TTL-to-cold window — that's
+# the signal you need more hot SSD. Volumes can grow but cannot shrink.
+[[mounts]]
+  source = "plexus_ch_data"
+  destination = "/var/lib/clickhouse"
+
+# ── Machine size ────────────────────────────────────────────────────────
+# performance-2x + 4 GB (2 dedicated cores, ~$62/mo machine + ~$1.50/mo
+# volume). Moved off shared-cpu-2x on 2026-05-28: under real ingest the
+# background merge load (base table + 1min/1hr rollup MVs) saturated the
+# shared-CPU burst credits, driving OSStealTime to ~98% — reader queries
+# that should take <1s were taking 20-48s. Dedicated cores let merges run
+# continuously instead of competing for stolen CPU. Keep this size as long
+# as the merge workload is steady; only revisit if you split the rollup
+# MVs onto a separate machine or drastically cut ingest cadence.
+[[vm]]
+  size   = "performance-2x"
+  memory = "4gb"
+
+# ── Non-secret env ──────────────────────────────────────────────────────
+# These are the Tigris endpoint URLs. The access/secret keys that
+# authorize them are set via `fly secrets set` (see header).
+[env]
+  CLICKHOUSE_S3_COLD_ENDPOINT   = "https://fly.storage.tigris.dev/plexus-ch/clickhouse/cold_storage/"
+  CLICKHOUSE_S3_BACKUP_ENDPOINT = "https://fly.storage.tigris.dev/plexus-ch/clickhouse/backups/"
+
+# ── Public HTTPS via Fly edge ────────────────────────────────────────────
+# Exposes the HTTP interface at https://plexus-ch.fly.dev with TLS
+# terminated at the edge. The server itself listens on plain HTTP (8123);
+# Fly's proxy handles TLS and HTTP/2 on the public side.
+#
+# auto_stop_machines = "off" because CH is stateful: we never want the
+# machine suspended or replaced behind a request; min_machines_running
+# keeps exactly one instance live.
+[http_service]
+  internal_port      = 8123
+  force_https        = true
+  auto_stop_machines = "off"
+  auto_start_machines = true
+  min_machines_running = 1
+
+  # ClickHouse /ping returns 200 "Ok." when healthy. grace_period is
+  # generous so first-boot disk init + S3 disk registration doesn't flap
+  # the edge's routing decision.
+  [[http_service.checks]]
+    grace_period = "60s"
+    interval     = "30s"
+    method       = "GET"
+    path         = "/ping"
+    timeout      = "5s"

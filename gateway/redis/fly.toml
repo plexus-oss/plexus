@@ -1,0 +1,32 @@
+# fly.toml app configuration file generated for plexus-gateway-redis on 2026-04-09T12:25:15-05:00
+#
+# See https://fly.io/docs/reference/configuration/ for information about how to use this file.
+#
+
+app = 'plexus-gateway-redis'
+primary_region = 'iad'
+
+[build]
+  image = 'redis:7-alpine'
+
+[processes]
+  redis = 'redis-server --protected-mode no --bind 0.0.0.0 :: --save "" --appendonly yes --dir /data --maxmemory 3gb --maxmemory-policy noeviction'
+
+[[mounts]]
+  source = 'redis_data'
+  destination = '/data'
+  processes = ['redis']
+
+[checks]
+  [checks.redis]
+    port = 6379
+    type = 'tcp'
+    interval = '10s'
+    timeout = '2s'
+    grace_period = '15s'
+
+[[vm]]
+  memory = '4gb'
+  cpu_kind = 'performance'
+  cpus = 1
+  processes = ['redis']

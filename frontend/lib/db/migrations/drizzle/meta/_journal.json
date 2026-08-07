@@ -1,0 +1,195 @@
+{
+  "version": "7",
+  "dialect": "postgresql",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "7",
+      "when": 1781669809788,
+      "tag": "0000_round_dreadnoughts",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1781706806043,
+      "tag": "0001_functions_triggers",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1781725349189,
+      "tag": "0002_small_fallen_one",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1781729004669,
+      "tag": "0003_realtime_notify",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1781817691944,
+      "tag": "0004_repair_scheduler_leases",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1781818745540,
+      "tag": "0005_seed_detect_offline_lease",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1782246205663,
+      "tag": "0006_yummy_nighthawk",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1782252294027,
+      "tag": "0007_fancy_raza",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1782323239907,
+      "tag": "0008_org_member_allowed_satellites",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1783266835174,
+      "tag": "0009_familiar_lionheart",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1783269148650,
+      "tag": "0010_volatile_electro",
+      "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1784518494594,
+      "tag": "0011_careless_frank_castle",
+      "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1784556677761,
+      "tag": "0012_lame_invisible_woman",
+      "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1784558196543,
+      "tag": "0013_flat_the_hood",
+      "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1784574708999,
+      "tag": "0014_black_nicolaos",
+      "breakpoints": true
+    },
+    {
+      "idx": 15,
+      "version": "7",
+      "when": 1784577785314,
+      "tag": "0015_nervous_pepper_potts",
+      "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "7",
+      "when": 1784597611504,
+      "tag": "0016_drop_dead_tables",
+      "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1784600423891,
+      "tag": "0017_add_ai_usage",
+      "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1784652441644,
+      "tag": "0018_smart_snowbird",
+      "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1785185114181,
+      "tag": "0019_team_scope",
+      "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1785190102938,
+      "tag": "0020_remove_teams",
+      "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1785196107898,
+      "tag": "0021_custom_roles",
+      "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "7",
+      "when": 1785196116561,
+      "tag": "0022_drop_access_overrides",
+      "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "7",
+      "when": 1785203658142,
+      "tag": "0023_source_only_scope",
+      "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1785251448426,
+      "tag": "0024_enable_rls_public_tables",
+      "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "7",
+      "when": 1785252748319,
+      "tag": "0025_mighty_mathemanic",
+      "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "7",
+      "when": 1785266324751,
+      "tag": "0026_runs",
+      "breakpoints": true
+    }
+  ]
+}

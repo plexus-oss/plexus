@@ -1,0 +1,345 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+
+@layer base {
+
+  body {
+    background-color: hsl(var(--background));
+    color: hsl(var(--foreground));
+  }
+  :root {
+    --font-geist-mono: var(--font-geist-mono);
+    --font-instrument: var(--instrument-serif);
+    --background: 0 0% 100%;
+    --foreground: 240 10% 3.9%;
+    --card: 0 0% 100%;
+    --card-foreground: 240 10% 3.9%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 240 10% 3.9%;
+    --primary: 240 10% 3.9%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 240 4.8% 95.9%;
+    --secondary-foreground: 240 5.9% 10%;
+    --muted: 240 4.8% 95.9%;
+    --muted-foreground: 240 3.8% 46.1%;
+    --accent: 240 4.8% 95.9%;
+    --accent-foreground: 240 5.9% 10%;
+    --destructive: 0 84.2% 60.2%;
+    --destructive-foreground: 0 0% 98%;
+    --border: 240 5.9% 90%;
+    --input: 240 5.9% 90%;
+    --ring: 240 10% 3.9%;
+    --chart-1: 12 76% 61%;
+    --chart-2: 173 58% 39%;
+    --chart-3: 197 37% 24%;
+    --chart-4: 43 74% 66%;
+    --chart-5: 27 87% 67%;
+    --radius: 0.5rem;
+  
+
+  }
+  .dark {
+    --background: 240 10% 3.9%;
+    --foreground: 0 0% 98%;
+    --card: 240 10% 3.9%;
+    --card-foreground: 0 0% 98%;
+    --popover: 240 10% 3.9%;
+    --popover-foreground: 0 0% 98%;
+    --primary: 0 0% 98%;
+    --primary-foreground: 240 10% 3.9%;
+    --secondary: 240 3.7% 15.9%;
+    --secondary-foreground: 0 0% 98%;
+    --muted: 240 3.7% 15.9%;
+    --muted-foreground: 240 5% 64.9%;
+    --accent: 240 3.7% 15.9%;
+    --accent-foreground: 0 0% 98%;
+    --destructive: 0 62.8% 30.6%;
+    --destructive-foreground: 0 0% 98%;
+    --border: 240 3.7% 15.9%;
+    --input: 240 3.7% 15.9%;
+    --ring: 240 4.9% 83.9%;
+    --chart-1: 220 70% 50%;
+    --chart-2: 160 60% 45%;
+    --chart-3: 30 80% 55%;
+    --chart-4: 280 65% 60%;
+    --chart-5: 340 75% 55%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+
+
+  }
+  body {
+    @apply bg-background text-foreground;
+  }
+}
+
+html[data-theme="fun"],
+html[data-theme="fun"].dark {
+  /* Cream background, ink text — mirror of marketing/globals.css. */
+  --background: 38 36% 93%;
+  --foreground: 60 8% 5%;
+  --card: 42 50% 96%;
+  --card-foreground: 60 8% 5%;
+  --popover: 42 50% 96%;
+  --popover-foreground: 60 8% 5%;
+  --primary: 60 8% 5%;
+  --primary-foreground: 42 50% 96%;
+  --secondary: 38 22% 88%;
+  --secondary-foreground: 60 8% 5%;
+  --muted: 38 22% 88%;
+  --muted-foreground: 50 8% 28%;
+  --accent: 38 22% 88%;
+  --accent-foreground: 60 8% 5%;
+  --destructive: 8 75% 55%;
+  --destructive-foreground: 42 50% 96%;
+  --border: 38 12% 78%;
+  --input: 38 12% 78%;
+  --ring: 60 8% 5%;
+  --radius: 0.25rem;
+
+  /* Brand-side tokens, used by .h-bubble and any opt-in marketing-style
+     surface that wants the chunky display face or coral accent. */
+  --plx-hot: oklch(70% 0.2 18);
+  --plx-lime: oklch(88% 0.2 130);
+  --plx-sky: oklch(80% 0.13 230);
+  --bubble-font: var(--font-bagel-fat-one, "Bagel Fat One"),
+    "Instrument Serif", Georgia, serif;
+
+  color-scheme: light;
+}
+
+html[data-theme="serious"] {
+  --bubble-font: var(--font-geist-mono, "Space Grotesk"), ui-sans-serif,
+    system-ui, sans-serif;
+}
+
+/* Fun-mode body — newsprint dot pattern from the marketing site, layered
+   onto the cream canvas. Opaque cards/tables sit on top cleanly. */
+html[data-theme="fun"] body {
+  background-image:
+    radial-gradient(rgba(14, 14, 12, 0.1) 1px, transparent 1px),
+    radial-gradient(rgba(14, 14, 12, 0.06) 1px, transparent 1px);
+  background-size:
+    3px 3px,
+    7px 7px;
+  background-position:
+    0 0,
+    1px 2px;
+}
+
+/* Strip the PageWrapper's card frame in fun mode — full-bleed cream
+   canvas, dropping the m-1 / rounded-md / border / bg-background/50
+   styling that gives the serious shell its inset-boxed look. */
+html[data-theme="fun"] .page-shell {
+  margin: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+/* PageWrapper title bar in fun mode — keep the standard sans title from
+   serious mode (no Bagel here; bubble is reserved for FunHeader and the
+   API page hero). Just give the bar a touch more breathing room and the
+   marketing rule color. */
+html[data-theme="fun"] .page-shell-header {
+  padding: 10px 16px;
+  border-bottom-color: hsl(var(--border));
+}
+
+/* Code blocks (the API docs CodeBlock) re-skin to match the marketing
+   pane treatment in fun mode — paper background, ink text, coral pip
+   header, dashed rule. Tokyo Night highlights flip to brand-aligned
+   coral / lime / sky / dim. Selectors here are higher specificity than
+   Tailwind utilities so the cream paint wins. */
+html[data-theme="fun"] .code-shell {
+  background: hsl(var(--card)) !important;
+  border: 1px solid hsl(var(--border)) !important;
+  box-shadow: none !important;
+  --tw-ring-shadow: 0 0 #0000 !important;
+}
+html[data-theme="fun"] .code-shell .code-shell-header {
+  background: transparent !important;
+  border-bottom: 1px solid hsl(var(--border)) !important;
+}
+html[data-theme="fun"] .code-shell .code-shell-label {
+  color: hsl(var(--muted-foreground)) !important;
+  font-family: var(--mono, ui-monospace, monospace);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-size: 11px;
+}
+html[data-theme="fun"] .code-shell pre {
+  color: hsl(var(--foreground)) !important;
+}
+html[data-theme="fun"] .code-shell .code-block-wrapper pre {
+  color: hsl(var(--foreground)) !important;
+}
+html[data-theme="fun"] .code-shell [class*="text-zinc-"] {
+  color: hsl(var(--foreground) / 0.85) !important;
+}
+html[data-theme="fun"] .code-shell .text-zinc-600 {
+  color: hsl(var(--foreground) / 0.35) !important;
+}
+html[data-theme="fun"] .code-shell .text-zinc-500 {
+  color: hsl(var(--foreground) / 0.55) !important;
+}
+/* Pink glow separator → solid coral hairline. */
+html[data-theme="fun"] .code-shell [class*="bg-pink-400"] {
+  background: var(--plx-hot) !important;
+  box-shadow: none !important;
+}
+/* Endpoint-summary headlines on the API docs page bubble-ify in fun mode
+   so they read as section breaks rather than ordinary h2s. */
+html[data-theme="fun"] .api-anchor-h2 {
+  font-family: var(--bubble-font);
+  font-weight: 400;
+  text-transform: lowercase;
+  letter-spacing: -0.01em;
+  font-size: clamp(28px, 3vw, 40px);
+  line-height: 1;
+}
+
+/* Syntax highlighting in fun mode — coral / lime / sky / dim. Mirrors the
+   marketing .feature-card pre .kw / .str / .com / .num colors. */
+html[data-theme="fun"] .code-block-wrapper .hlk {
+  color: oklch(60% 0.18 18); /* keywords — coral */
+}
+html[data-theme="fun"] .code-block-wrapper .hls {
+  color: oklch(55% 0.16 140); /* strings — lime */
+}
+html[data-theme="fun"] .code-block-wrapper .hlc {
+  color: hsl(var(--foreground) / 0.4); /* comments — dim ink */
+}
+html[data-theme="fun"] .code-block-wrapper .hln {
+  color: oklch(55% 0.16 230); /* numbers — sky */
+}
+html[data-theme="fun"] .code-block-wrapper .hlp {
+  color: oklch(55% 0.16 230); /* preprocessor — sky */
+}
+html[data-theme="fun"] .code-block-wrapper .hlh {
+  color: oklch(55% 0.18 300); /* highlight — violet pill */
+  background: oklch(55% 0.18 300 / 0.12);
+  padding: 0 3px;
+  border-radius: 3px;
+}
+
+/* Visibility utilities — same contract as marketing/app/globals.css. Hide
+   rules are scoped per theme so they never override Tailwind utilities on
+   the visible element. */
+html:not([data-theme="fun"]) .fun-only {
+  display: none !important;
+}
+html[data-theme="fun"] .serious-only {
+  display: none !important;
+}
+
+/* Bubble headline — only meaningful in fun mode. Mirrors marketing's
+   .h-bubble; in serious mode, falls back to a heavier sans look. */
+.h-bubble {
+  font-family: var(--bubble-font);
+  font-weight: 400;
+  line-height: 0.92;
+  letter-spacing: -0.01em;
+  font-size: clamp(40px, 6vw, 88px);
+  text-transform: lowercase;
+  margin: 0;
+  text-wrap: balance;
+}
+html:not([data-theme="fun"]) .h-bubble {
+  text-transform: none;
+  font-weight: 600;
+  letter-spacing: -0.025em;
+  line-height: 1.02;
+}
+
+:root {
+  --onb-bg: 0 0% 0%;
+  --onb-fg: 0 0% 100%;
+  --onb-cta-bg: 0 0% 100%;
+  --onb-cta-fg: 0 0% 0%;
+  --onb-accent: 261 90% 71%; /* violet-400 */
+  --onb-accent-soft: 261 90% 78%; /* violet-300 */
+}
+html[data-theme="fun"] {
+  --onb-bg: 38 36% 93%; /* cream */
+  --onb-fg: 60 8% 5%; /* ink */
+  --onb-cta-bg: 60 8% 5%;
+  --onb-cta-fg: 38 36% 93%;
+  --onb-accent: 8 75% 55%; /* coral */
+  --onb-accent-soft: 8 75% 65%;
+}
+
+/* Pulsing live indicator — coral in fun, neutral in serious. Mirrors the
+   marketing .live-dot. */
+@keyframes plx-live-pulse {
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.35;
+    transform: scale(0.82);
+  }
+}
+.live-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--plx-hot, hsl(var(--primary)));
+  animation: plx-live-pulse 1.6s infinite ease-in-out;
+  flex-shrink: 0;
+}
+@media (prefers-reduced-motion: reduce) {
+  .live-dot {
+    animation: none;
+  }
+}
+
+/* React Grid Layout - subtle placeholder styling */
+.react-grid-placeholder {
+  background: hsl(var(--muted)) !important;
+  border: 1px dashed hsl(var(--border)) !important;
+  border-radius: 0.5rem;
+  opacity: 0.5 !important;
+}
+
+.react-grid-item.cssTransforms {
+  transition-duration: 100ms !important;
+}
+
+.react-grid-layout {
+  transition: height 100ms !important;
+}
+
+.react-grid-item.react-draggable-dragging {
+  z-index: 100;
+  box-shadow: 0 10px 25px -5px rgb(0 0 0 / 0.1), 0 8px 10px -6px rgb(0 0 0 / 0.1);
+  border-radius: 0.5rem;
+}
+
+/* Suppress hover effects on non-active panels during drag/resize */
+.react-grid-layout:has(.react-draggable-dragging) .react-grid-item:not(.react-draggable-dragging),
+.react-grid-layout:has(.resizing) .react-grid-item:not(.resizing) {
+  pointer-events: none;
+}
+
+/* Lightweight syntax highlighting */
+.code-block-wrapper .hlk { color: #bb9af7; } /* keywords — purple */
+.code-block-wrapper .hls { color: #9ece6a; } /* strings — green */
+.code-block-wrapper .hlc { color: #565f89; } /* comments — dim */
+.code-block-wrapper .hln { color: #ff9e64; } /* numbers — orange */
+.code-block-wrapper .hlp { color: #7aa2f7; } /* preprocessor — blue */
+.code-block-wrapper .hlh { /* highlight — violet pill, sits on top of any token */
+  color: #c4b5fd;
+  background: rgba(196, 181, 253, 0.14);
+  padding: 0 3px;
+  border-radius: 3px;
+}

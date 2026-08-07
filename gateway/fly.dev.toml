@@ -1,0 +1,64 @@
+# Dev gateway — plexus-gateway-dev in the plexus-dev org.
+# Same size as prod (512MB shared — already cheap). 1 machine.
+# Runs in prod mode (calls PLEXUS_API_URL to verify keys/sessions against
+# the dev frontend). Points at dev Redis via 6PN.
+#
+# Create + deploy (after Redis is up):
+#   flyctl apps create plexus-gateway-dev --org plexus-dev
+#   flyctl secrets set -a plexus-gateway-dev \
+#       REDIS_URL='plexus-gateway-redis-dev.internal:6379' \
+#       PLEXUS_API_URL='https://plexus-frontend-dev.fly.dev' \
+#       GATEWAY_ALLOWED_ORIGINS='plexus-frontend-dev.fly.dev'
+#   flyctl deploy --app plexus-gateway-dev --config gateway/fly.dev.toml
+
+app = 'plexus-gateway-dev'
+primary_region = 'iad'
+
+[build]
+  dockerfile = 'Dockerfile'
+
+[env]
+  GATEWAY_MODE = 'prod'
+
+[[services]]
+  protocol = 'tcp'
+  internal_port = 8080
+  auto_stop_machines = 'stop'
+  auto_start_machines = true
+  min_machines_running = 0
+
+  [[services.ports]]
+    port = 80
+    handlers = ['http']
+    force_https = true
+
+  [[services.ports]]
+    port = 443
+    handlers = ['tls', 'http']
+
+  [services.concurrency]
+    type = 'connections'
+    hard_limit = 1000
+    soft_limit = 500
+
+  [[services.tcp_checks]]
+    interval = '15s'
+    timeout = '2s'
+    grace_period = '10s'
+
+  [[services.http_checks]]
+    interval = '30s'
+    timeout = '5s'
+    grace_period = '30s'
+    method = 'get'
+    path = '/health'
+    protocol = 'http'
+
+[[vm]]
+  memory = '512mb'
+  cpu_kind = 'shared'
+  cpus = 1
+
+[[metrics]]
+  port = 9090
+  path = '/metrics'
