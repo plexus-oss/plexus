@@ -49,8 +49,9 @@ fi
 if [ "$CMD" = "upgrade" ] && [ -n "$SELFHOST_DIR" ]; then
   say "… pulling $VERSION images and restarting"
   git -C "$SELFHOST_DIR/.." pull --ff-only || true
-  compose pull --ignore-buildable || true
-  compose up -d --remove-orphans
+  compose pull || true
+  # --build is a no-op when pulled images are current; rebuilds from source otherwise.
+  compose up -d --build --remove-orphans
   exit 0
 fi
 
@@ -134,7 +135,9 @@ fi
 
 # ---- up -------------------------------------------------------------------
 say ""
-if compose pull --ignore-buildable 2>/dev/null; then
+# A full pull only succeeds when the app images exist in the registry
+# (--ignore-buildable would "succeed" by skipping them entirely).
+if compose pull 2>/dev/null; then
   say "… starting with prebuilt images ($VERSION)"
   compose up -d --no-build
 else
