@@ -12,7 +12,7 @@ on. Everything else is free forever, uncapped, for any single team.
 
 ## Buying
 
-Email **sales@plexus.company**. Enterprise is sales-led and invoiced — tell
+Email **info@plexus.company**. Enterprise is sales-led and invoiced — tell
 us org name, rough fleet size, and which features you need. On payment you
 receive a license key (a signed `PLXL1.…` token) issued to your org with an
 expiry matching your term.

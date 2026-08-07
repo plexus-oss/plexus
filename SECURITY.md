@@ -2,7 +2,7 @@
 
 ## Reporting a vulnerability
 
-Email **security@plexus.company** with a description and reproduction steps.
+Email **info@plexus.company** with a description and reproduction steps.
 You'll get an acknowledgment within 2 business days. Please don't open public
 issues for suspected vulnerabilities.
 
@@ -25,7 +25,7 @@ Apache-2.0 SDKs (plexus-python, plexus-typescript).
   infrastructure; see `selfhost/README.md` for offline install notes.
 - **Secrets** are generated per-install by `selfhost/install.sh` and stored
   only in your local `.env` (mode 600).
-- **Advisories:** subscribe by emailing security@plexus.company with the
+- **Advisories:** subscribe by emailing info@plexus.company with the
   subject "subscribe" — CVE notices and patch releases go to that list
   first. Enterprise license holders get a patch SLA and a signed air-gapped
   release channel (see `docs/enterprise.md`).
