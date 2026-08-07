@@ -28,7 +28,8 @@ import { parseLicenseToken, type LicensePayload } from "./token";
 export * from "./registry";
 export { parseLicenseToken, TOKEN_PREFIX, type LicensePayload } from "./token";
 
-export const RENEWAL_URL = "https://plexus.company/renew";
+// Points at pricing until a dedicated /renew page exists on marketing.
+export const RENEWAL_URL = "https://plexus.company/pricing";
 
 export type AccessLevel = "full" | "readonly" | "none";
 
