@@ -3,7 +3,7 @@
 The entire Plexus platform on your own hardware with one command:
 
 ```
-curl -fsSL https://raw.githubusercontent.com/plexus-oss/plexus/main/selfhost/install.sh | bash
+curl -fsSL https://plexus.company/install.sh | bash
 ```
 
 The installer asks four questions (install dir, hostname, optional Anthropic
