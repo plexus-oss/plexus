@@ -1,0 +1,1 @@
+ALTER TABLE "lab_corpora" ALTER COLUMN "embedding_model" SET DEFAULT 'bge-large-en-v1.5';

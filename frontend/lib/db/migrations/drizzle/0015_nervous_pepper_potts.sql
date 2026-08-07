@@ -1,0 +1,1 @@
+ALTER TABLE "device_auth_requests" ADD COLUMN "requested_name" text;

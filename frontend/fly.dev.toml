@@ -1,0 +1,97 @@
+# Dev (staging) Fly app — plexus-frontend-dev in the plexus-dev org.
+# Mirrors fly.toml (prod) with dev NEXT_PUBLIC_* build-args + 6PN internal
+# service URLs (all dev services are in the same org). Drizzle auto-migrates
+# the dev DB on every deploy via release_command.
+#
+# Deploy:
+#   fly deploy --app plexus-frontend-dev --config fly.dev.toml
+#
+# Secrets (NOT here — set via `fly secrets set -a plexus-frontend-dev`):
+#   DATABASE_URL  AUTH_SECRET  AUTH_URL  ENCRYPTION_KEY  PLEXUS_INTERNAL_SECRET
+#   CRON_SECRET  STRIPE_SECRET_KEY  STRIPE_WEBHOOK_SECRET  PLEXUS_CLICKHOUSE_PASSWORD
+#   RESEND_API_KEY  ANTHROPIC_API_KEY  SLACK_CLIENT_ID  SLACK_CLIENT_SECRET
+#   TIGRIS_ACCESS_KEY_ID  TIGRIS_SECRET_ACCESS_KEY  SUPABASE_SERVICE_ROLE_KEY
+
+app = 'plexus-frontend-dev'
+primary_region = 'iad'
+
+[deploy]
+  # Same as prod: apply pending Drizzle migrations before the new release takes
+  # traffic. Reads DATABASE_URL from the ambient env (Fly secret). No-op when
+  # current. Dev DB starts empty → first deploy creates the full schema.
+  release_command = 'node migrate-runner.cjs'
+
+[build]
+  dockerfile = 'Dockerfile'
+
+  # NEXT_PUBLIC_* vars are inlined at build time. Dev values only — do NOT copy
+  # these into prod's fly.toml. Public keys (publishable/anon) are safe to commit.
+  [build.args]
+    NEXT_PUBLIC_APP_URL                  = 'https://plexus-frontend-dev.fly.dev'
+    NEXT_PUBLIC_SUPABASE_URL             = 'https://loepoacdmvvckfqlxryz.supabase.co'
+    NEXT_PUBLIC_SUPABASE_ANON_KEY        = ''
+    NEXT_PUBLIC_GATEWAY_HOST             = 'plexus-gateway-dev.fly.dev'
+    NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY   = 'pk_test_REPLACE_ME'
+    # Hides billing UI + gates isBillingEnabled() off (see lib/billing/config.ts).
+    # Requires the matching ARG in the Dockerfile (added).
+    NEXT_PUBLIC_BILLING_ENABLED          = 'false'
+
+[env]
+  NODE_ENV               = 'production'
+  NEXT_TELEMETRY_DISABLED = '1'
+  PORT                   = '3000'
+  HOSTNAME               = '::'
+  # Billing off at runtime too (server-side gate in computeAccessEnabled).
+  BILLING_ENABLED        = 'false'
+  # All dev services are in the plexus-dev org — 6PN internal URLs work.
+  # Browser WebSocket uses NEXT_PUBLIC_GATEWAY_HOST (public Fly edge, above).
+  PLEXUS_GATEWAY_URL         = 'http://plexus-gateway-dev.internal:8080'
+  PLEXUS_LOADER_URL          = 'http://plexus-ch-loader-dev.internal:8080'
+  # ClickHouse: 6PN internal HTTP. nextjs_reader is open to both 6PN and edge.
+  PLEXUS_CLICKHOUSE_URL      = 'http://plexus-ch-dev.internal:8123'
+  PLEXUS_CLICKHOUSE_USER     = 'nextjs_reader'
+  PLEXUS_CLICKHOUSE_DATABASE = 'plexus'
+  # Tigris — dev buckets (created via aws s3api). Not sensitive, so in [env] not
+  # secrets. ICONS bucket is public-read; CONTEXT is private (presigned GET).
+  TIGRIS_ENDPOINT            = 'https://t3.storage.dev'
+  TIGRIS_BUCKET_ICONS        = 'dev-dashboard-icons'
+  TIGRIS_BUCKET_CONTEXT      = 'dev-source-context'
+
+[[services]]
+  protocol = 'tcp'
+  internal_port = 3000
+  auto_stop_machines = 'stop'
+  auto_start_machines = true
+  min_machines_running = 0
+
+  [[services.ports]]
+    port = 80
+    handlers = ['http']
+    force_https = true
+
+  [[services.ports]]
+    port = 443
+    handlers = ['tls', 'http']
+
+  [services.concurrency]
+    type = 'requests'
+    hard_limit = 250
+    soft_limit = 200
+
+  [[services.tcp_checks]]
+    interval = '15s'
+    timeout = '2s'
+    grace_period = '10s'
+
+  [[services.http_checks]]
+    interval = '30s'
+    timeout = '10s'
+    grace_period = '60s'
+    method = 'get'
+    path = '/api/ping'
+    protocol = 'http'
+
+[[vm]]
+  memory = '1024mb'
+  cpu_kind = 'shared'
+  cpus = 1

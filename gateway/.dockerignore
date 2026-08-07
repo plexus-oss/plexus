@@ -1,0 +1,22 @@
+# Local build artifacts
+gateway
+*.test
+coverage.out
+*.out
+
+# Secrets and local env (use fly secrets in prod)
+.env
+*.env.local
+
+# Local Redis data
+data/
+
+# Docs and dev files — not needed in the build context
+*.md
+docker-compose.yml
+
+# Git and editor junk
+.git/
+.gitignore
+.vscode/
+.idea/

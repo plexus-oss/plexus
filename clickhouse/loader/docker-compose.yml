@@ -1,0 +1,30 @@
+services:
+  loader:
+    build: .
+    container_name: ch-loader
+    restart: unless-stopped
+    environment:
+      - REDIS_URL=${REDIS_URL}
+      - CH_HOST=${CH_HOST}
+      - CH_PASSWORD=${CH_PASSWORD}
+      # Recording filter: defaults to the dev escape hatch (filter off,
+      # persist all sources). To run the real filter locally, set
+      # PLEXUS_API_URL + PLEXUS_INTERNAL_SECRET and RECORDING_FILTER_DISABLED=0
+      # in .env.
+      - PLEXUS_API_URL=${PLEXUS_API_URL:-}
+      - PLEXUS_INTERNAL_SECRET=${PLEXUS_INTERNAL_SECRET:-}
+      - RECORDING_FILTER_DISABLED=${RECORDING_FILTER_DISABLED:-1}
+    ports:
+      - "127.0.0.1:8080:8080"   # Health check
+
+  # Optional: self-contained local Redis for dev without the gateway.
+  # Enable with: docker compose --profile local-redis up
+  # Then set REDIS_URL=redis://loader-redis:6379 in .env
+  redis:
+    image: valkey/valkey:8-alpine  # BSD-3 Redis fork — redis:7.4+ is RSALv2/SSPL, unshippable in the self-host bundle
+    container_name: loader-redis
+    hostname: loader-redis
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:6379:6379"
+    profiles: [local-redis]

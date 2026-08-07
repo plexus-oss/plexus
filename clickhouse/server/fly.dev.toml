@@ -1,0 +1,63 @@
+# Dev ClickHouse server — plexus-ch-dev in the plexus-dev org.
+# Scaled down from prod (performance-2x 4GB → shared-cpu-1x 1GB, 80GB vol → 10GB).
+# 1 machine. Embedded Keeper (single node, no replication cluster).
+#
+# Create + deploy:
+#   flyctl apps create plexus-ch-dev --org plexus-dev
+#   flyctl volumes create plexus_ch_data --region iad --size 10 -a plexus-ch-dev
+#   flyctl secrets set -a plexus-ch-dev \
+#       CH_PASSWORD='<writer plaintext>' \
+#       CH_WRITER_PASSWORD_SHA256='<sha256 of writer plaintext>' \
+#       CH_READER_PASSWORD_SHA256='<sha256 of reader plaintext>' \
+#       CH_ADMIN_PASSWORD_SHA256='<sha256 of admin plaintext>' \
+#       CH_REPLICATION_SECRET='<generated>' \
+#       AWS_ACCESS_KEY_ID='<tigris key>' \
+#       AWS_SECRET_ACCESS_KEY='<tigris secret>'
+#   flyctl deploy --app plexus-ch-dev --config clickhouse/server/fly.dev.toml
+#
+# After first deploy, apply the schema:
+#   flyctl proxy 8123 -a plexus-ch-dev
+#   clickhouse-client --host=127.0.0.1 --port=8123 --user=telemetry_writer \
+#       --password='<writer plaintext>' --multiquery < clickhouse/server/schema.sql
+#
+# users.xml resolves password hashes from the *_SHA256 secrets via from_env=
+# (see README "Credentials" — hashes are no longer baked into the image, so
+# dev can and should use DIFFERENT passwords than prod). telemetry_writer is
+# locked to 6PN (fdaa::/16) by the Dockerfile, so the writer is unreachable
+# from the public edge.
+# ⚠️ Old passwords (Bl@ckCh3rry and the rotated value that used to sit in this
+# comment) were committed to git history — they are burned; rotate everywhere.
+
+app = 'plexus-ch-dev'
+primary_region = 'iad'
+
+[build]
+  dockerfile = 'Dockerfile'
+  [build.args]
+    CH_INTERNAL_HOST = 'plexus-ch-dev.internal'
+
+[[mounts]]
+  source = 'plexus_ch_data'
+  destination = '/var/lib/clickhouse'
+
+[[vm]]
+  size   = 'shared-cpu-1x'
+  memory = '1gb'
+
+[env]
+  CLICKHOUSE_S3_COLD_ENDPOINT   = 'https://fly.storage.tigris.dev/plexus-ch-dev/clickhouse/cold_storage/'
+  CLICKHOUSE_S3_BACKUP_ENDPOINT = 'https://fly.storage.tigris.dev/plexus-ch-dev/clickhouse/backups/'
+
+[http_service]
+  internal_port      = 8123
+  force_https        = true
+  auto_stop_machines = 'off'
+  auto_start_machines = true
+  min_machines_running = 1
+
+  [[http_service.checks]]
+    grace_period = '60s'
+    interval     = '30s'
+    method       = 'GET'
+    path         = '/ping'
+    timeout      = '5s'

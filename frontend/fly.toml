@@ -1,0 +1,73 @@
+app = 'plexus-frontend'
+primary_region = 'iad'
+
+[deploy]
+  # Apply pending Drizzle migrations before the new release takes traffic.
+  # migrate-runner.cjs is the bundled migrator (see Dockerfile); it reads
+  # DATABASE_URL from the ambient env (Fly secret) and is a no-op when current.
+  release_command = 'node migrate-runner.cjs'
+
+[build]
+  dockerfile = 'Dockerfile'
+
+  # NEXT_PUBLIC_* vars are inlined at build time, not runtime.
+  # Values here are passed as --build-arg to Docker.
+  [build.args]
+    # All NEXT_PUBLIC_* vars are inlined at build time.
+    # Public keys (publishable) are safe to commit here.
+    NEXT_PUBLIC_APP_URL                  = 'https://app.plexus.company'
+    NEXT_PUBLIC_GATEWAY_HOST             = 'gateway.plexus.company'
+    NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY   = 'pk_live_51RiKw9B3KofXyEDWwvoyhM1lbaulsv1z1cAwHynXKzxHrYNVsv9jwXk1qvzynjTgTCy9WwHZZsVUjXASQOvuvQDI00ElCAjnQn'
+
+[env]
+  NODE_ENV               = 'production'
+  NEXT_TELEMETRY_DISABLED = '1'
+  PORT                   = '3000'
+  HOSTNAME               = '::'
+  # AUTH_SECRET + AUTH_URL are set as fly secrets (not committed here).
+  # Internal service URLs via 6PN — avoids egress fees
+  PLEXUS_CLICKHOUSE_URL      = 'http://plexus-ch.internal:8123'
+  PLEXUS_CLICKHOUSE_USER     = 'nextjs_reader'
+  PLEXUS_CLICKHOUSE_DATABASE = 'plexus'
+  PLEXUS_GATEWAY_URL         = 'http://plexus-gateway.internal:8080'
+  PLEXUS_LOADER_URL          = 'http://plexus-ch-loader.internal:8080'
+  RECORDER_SERVICE_URL       = 'http://plexus-recorder.internal:8080'
+
+[[services]]
+  protocol = 'tcp'
+  internal_port = 3000
+  auto_stop_machines = 'off'
+  auto_start_machines = true
+  min_machines_running = 1
+
+  [[services.ports]]
+    port = 80
+    handlers = ['http']
+    force_https = true
+
+  [[services.ports]]
+    port = 443
+    handlers = ['tls', 'http']
+
+  [services.concurrency]
+    type = 'requests'
+    hard_limit = 250
+    soft_limit = 200
+
+  [[services.tcp_checks]]
+    interval = '15s'
+    timeout = '2s'
+    grace_period = '10s'
+
+  [[services.http_checks]]
+    interval = '30s'
+    timeout = '10s'
+    grace_period = '60s'
+    method = 'get'
+    path = '/api/ping'
+    protocol = 'http'
+
+[[vm]]
+  memory = '1024mb'
+  cpu_kind = 'shared'
+  cpus = 1

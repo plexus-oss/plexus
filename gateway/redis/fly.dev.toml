@@ -1,0 +1,36 @@
+# Dev Redis — plexus-gateway-redis-dev in the plexus-dev org.
+# Scaled down from prod (4GB perf → 512MB shared, 3GB maxmemory → 256MB).
+# 1 machine. No secrets. Volume persists across restarts.
+#
+# Create + deploy:
+#   flyctl apps create plexus-gateway-redis-dev --org plexus-dev
+#   flyctl volumes create redis_data --region iad --size 1 -a plexus-gateway-redis-dev
+#   flyctl deploy --app plexus-gateway-redis-dev --config gateway/redis/fly.dev.toml
+
+app = 'plexus-gateway-redis-dev'
+primary_region = 'iad'
+
+[build]
+  image = 'redis:7-alpine'
+
+[processes]
+  redis = 'redis-server --protected-mode no --bind 0.0.0.0 :: --save "" --appendonly yes --dir /data --maxmemory 256mb --maxmemory-policy noeviction'
+
+[[mounts]]
+  source = 'redis_data'
+  destination = '/data'
+  processes = ['redis']
+
+[checks]
+  [checks.redis]
+    port = 6379
+    type = 'tcp'
+    interval = '10s'
+    timeout = '2s'
+    grace_period = '15s'
+
+[[vm]]
+  memory = '512mb'
+  cpu_kind = 'shared'
+  cpus = 1
+  processes = ['redis']

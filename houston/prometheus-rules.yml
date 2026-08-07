@@ -1,0 +1,108 @@
+# Prometheus alert rules for plexus-alert-service.
+#
+# Scrape target is port 9091 /metrics (exposed via Fly's [[metrics]]
+# block in fly.toml). Every alertd_* metric is defined in metrics.go
+# in this repo — the naming convention is stable, breaking changes
+# get a changelog entry.
+#
+# Assumed labels:
+#   job="plexus-alert-service"   # applied by the Prometheus scrape config,
+#                                # not by the service itself
+#
+# Copy this file into your Prometheus rules config, or point Prometheus at
+# it via `rule_files:` in prometheus.yml. These are *alerting* rules, not
+# recording rules — every rule here is intended to page or notify someone.
+#
+# The `/readyz` HTTP endpoint is the authoritative readiness signal for
+# this service and exposes more fine-grained state (queue depths, sink
+# idle time, rules snapshot age) than is published as Prometheus metrics
+# today. Consider a blackbox exporter probe on /readyz as a complement
+# to the metrics-based rules below.
+
+groups:
+  - name: plexus-alert-service
+    interval: 30s
+    rules:
+
+      # ─── Service down ───────────────────────────────────────────────
+      # Prometheus can't reach the service at all. Covers: crash-loop,
+      # Fly machine stopped, network partition, wrong scrape config.
+      - alert: AlertServiceDown
+        expr: up{job="plexus-alert-service"} == 0
+        for: 2m
+        labels:
+          severity: critical
+          service: plexus-alert-service
+        annotations:
+          summary: "plexus-alert-service is unreachable"
+          description: |
+            Prometheus has been unable to scrape plexus-alert-service for >2 min.
+            Check: `flyctl status -a plexus-alert-service`
+                   `flyctl logs   -a plexus-alert-service`
+            Expect to find a startup error (bootstrap failure, Redis connect
+            failure, or port collision) in the logs.
+
+      # ─── No active consumers ────────────────────────────────────────
+      # Per-org consumer goroutines are rule-driven: at least one rule
+      # anywhere in the system should mean at least one consumer. Zero
+      # consumers for >10 min in prod means every org's rules are empty
+      # (unlikely) or the ConsumerManager is broken.
+      - alert: AlertServiceNoConsumers
+        expr: alertd_consumers_active == 0
+        for: 10m
+        labels:
+          severity: warning
+          service: plexus-alert-service
+        annotations:
+          summary: "alert-service has zero active consumers"
+          description: |
+            No per-org consumer goroutines are running. Either bootstrap
+            pulled an empty rule set from Next.js (check
+            /api/internal/alerts/rules/all), or ConsumerManager.Reconcile
+            is misbehaving. Inspect the startup log for the `bootstrap`
+            line and a list of `consumer started` events.
+
+      # ─── Notifier failing end-to-end ────────────────────────────────
+      # Every transition batch has a 3-retry budget. A positive failure
+      # rate over 10 min means batches are being dropped — user-facing
+      # alerts are disappearing.
+      - alert: AlertNotifierFailing
+        expr: rate(alertd_notifications_failed_total[5m]) > 0
+        for: 10m
+        labels:
+          severity: critical
+          service: plexus-alert-service
+        annotations:
+          summary: "alert-service is dropping transition batches"
+          description: |
+            One or more transition batches have exhausted retries in the
+            last 5 min, sustained for >10 min. User-facing alerts are
+            being lost. Almost always caused by Next.js
+            /api/internal/alerts/transitions returning 5xx or timing out.
+            Check Next.js logs and response times.
+
+      # (The ClickHouse sink and its AlertCHWritesFailing rule /
+      # alertd_ch_writes_failed_total metric were removed in commit 3bf7eb4
+      # — "stop writing to ch". The service no longer touches ClickHouse.)
+
+      # ─── Evaluation pipeline stalled ────────────────────────────────
+      # Consumers are nominally up but no rules are being evaluated.
+      # Catches "goroutines alive but Redis XREADGROUP is starving" and
+      # "every rule just got deleted but consumers didn't drain yet".
+      # Noisy on deliberately quiet orgs — tune the window if needed.
+      - alert: AlertEvaluationStalled
+        expr: |
+          rate(alertd_evaluations_total[5m]) == 0
+          and
+          alertd_consumers_active > 0
+        for: 15m
+        labels:
+          severity: warning
+          service: plexus-alert-service
+        annotations:
+          summary: "alert-service consumers up but pipeline is idle"
+          description: |
+            No rule evaluations in 15 min despite at least one active
+            consumer. Either the org has genuinely no traffic or
+            XREADGROUP isn't returning messages. Check Redis connectivity
+            and the stream length for the affected org.

@@ -1,0 +1,178 @@
+/**
+ * Shared alert-firing path for event detection.
+ *
+ * Used by both evaluators: the push path (/api/internal/detect, fed telemetry
+ * batches) and the poll path (lib/alerts/detect-poll, scanning
+ * connection sources). The dedup cache is in-process best-effort — bundler
+ * module duplication can give each entrypoint its own instance — but the two
+ * evaluators cover disjoint source types (push = device telemetry, poll =
+ * connection sources), each is self-consistent, and the poll path's persisted
+ * watermark is the durable duplicate guard.
+ */
+
+import "server-only";
+
+import { alertQueries, alertEventQueries } from "@/lib/db";
+import type { Alert, Json, Source } from "@/lib/db/types";
+import { triggerAlertWebhook } from "@/lib/webhooks/events";
+
+// ---------------------------------------------------------------------------
+// In-process dedup (5-minute window, keyed org:source:metric-key)
+// ---------------------------------------------------------------------------
+
+const recentAlertCache = new Map<
+  string,
+  { timestamp: number; alertId: string }
+>();
+
+export const ALERT_DEDUP_WINDOW_MS = 5 * 60 * 1000; // 5 minutes
+
+export function hasRecentAlert(
+  orgId: string,
+  sourceId: string,
+  metricKey: string,
+): boolean {
+  const cacheKey = `${orgId}:${sourceId}:${metricKey}`;
+  const cached = recentAlertCache.get(cacheKey);
+  if (!cached) return false;
+  if (Date.now() - cached.timestamp < ALERT_DEDUP_WINDOW_MS) return true;
+  recentAlertCache.delete(cacheKey);
+  return false;
+}
+
+export function markAlertCreated(
+  orgId: string,
+  sourceId: string,
+  metricKey: string,
+  alertId: string,
+): void {
+  const cacheKey = `${orgId}:${sourceId}:${metricKey}`;
+  recentAlertCache.set(cacheKey, { timestamp: Date.now(), alertId });
+}
+
+// ---------------------------------------------------------------------------
+// Event-alert firing (create → alert_event "created" → webhook fan-out)
+// ---------------------------------------------------------------------------
+
+export interface FireEventAlertParams {
+  orgId: string;
+  /** Source UUID — alerts.source_id (not the slug). */
+  sourceId: string;
+  /** For webhook payload enrichment; null skips enrichment, not delivery. */
+  source: Source | null;
+  metric: string;
+  value: number;
+  severity: "info" | "warning" | "critical";
+  /** ISO timestamp for alerts.triggered_at. */
+  triggeredAt: string;
+  /** alert_events "created" message. */
+  message: string;
+  contextSnapshot?: Record<string, unknown>;
+  eventMetadata?: Record<string, unknown>;
+}
+
+/**
+ * Fire an event alert, or return null when suppressed by the dedup window.
+ * Webhook/notification failure is logged but never fails the alert itself.
+ */
+export async function fireEventAlert(
+  params: FireEventAlertParams,
+): Promise<Alert | null> {
+  const { orgId, sourceId, metric } = params;
+  const dedupKey = `event:${metric}`;
+  if (hasRecentAlert(orgId, sourceId, dedupKey)) return null;
+
+  const alert = await alertQueries.create(orgId, {
+    source_id: sourceId,
+    trigger_type: "event",
+    metric,
+    value: params.value,
+    threshold: null,
+    bound: null,
+    severity: params.severity,
+    triggered_at: params.triggeredAt,
+    context_snapshot: (params.contextSnapshot ?? {}) as Json,
+  });
+
+  markAlertCreated(orgId, sourceId, dedupKey, alert.id);
+
+  await alertEventQueries.create(orgId, alert.id, "created", {
+    message: params.message,
+    metadata: params.eventMetadata ?? {},
+  });
+
+  try {
+    await triggerAlertWebhook(orgId, alert, params.source, "alert.triggered");
+  } catch (err) {
+    console.error("[fire-alert] Failed to dispatch event alert webhook:", err);
+  }
+
+  return alert;
+}
+
+// ---------------------------------------------------------------------------
+// Limit-violation firing (same shape as the push path in detect/route.ts)
+// ---------------------------------------------------------------------------
+
+export interface FireLimitAlertParams {
+  orgId: string;
+  /** Source UUID — alerts.source_id (not the slug). */
+  sourceId: string;
+  source: Source | null;
+  metric: string;
+  /** The violating value. */
+  value: number;
+  /** The bound that was crossed and its configured value. */
+  bound: "min" | "max";
+  threshold: number;
+  severity: "info" | "warning" | "critical";
+  limitId: string;
+  triggeredAt: string;
+  /** Custom message; falls back to the push path's format. */
+  message?: string | null;
+  contextSnapshot?: Record<string, unknown>;
+  eventMetadata?: Record<string, unknown>;
+}
+
+/**
+ * Fire a limit-violation alert, or return null when suppressed by the dedup
+ * window (keyed org:source:metric — same key the push path uses).
+ */
+export async function fireLimitAlert(
+  params: FireLimitAlertParams,
+): Promise<Alert | null> {
+  const { orgId, sourceId, metric } = params;
+  if (hasRecentAlert(orgId, sourceId, metric)) return null;
+
+  const alert = await alertQueries.create(orgId, {
+    source_id: sourceId,
+    trigger_type: "limit_violation",
+    metric,
+    value: params.value,
+    threshold: params.threshold,
+    bound: params.bound,
+    severity: params.severity,
+    limit_id: params.limitId,
+    triggered_at: params.triggeredAt,
+    ...(params.contextSnapshot
+      ? { context_snapshot: params.contextSnapshot as Json }
+      : {}),
+  });
+
+  markAlertCreated(orgId, sourceId, metric, alert.id);
+
+  await alertEventQueries.create(orgId, alert.id, "created", {
+    message:
+      params.message ||
+      `Limit violation: ${metric} ${params.bound === "min" ? "below minimum" : "above maximum"} (${params.value} vs ${params.threshold})`,
+    metadata: params.eventMetadata ?? {},
+  });
+
+  try {
+    await triggerAlertWebhook(orgId, alert, params.source, "alert.triggered");
+  } catch (err) {
+    console.error("[fire-alert] Failed to dispatch limit alert webhook:", err);
+  }
+
+  return alert;
+}

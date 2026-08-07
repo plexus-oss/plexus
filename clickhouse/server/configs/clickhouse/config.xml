@@ -1,0 +1,49 @@
+<clickhouse>
+  <listen_host>0.0.0.0</listen_host>
+  <http_port>8123</http_port>
+
+  <logger>
+    <level>warning</level>
+  </logger>
+
+  <max_server_memory_usage_to_ram_ratio>0.75</max_server_memory_usage_to_ram_ratio>
+  <mark_cache_size>536870912</mark_cache_size>        <!-- 512 MB; default is 5 GiB -->
+  <index_mark_cache_size>536870912</index_mark_cache_size>  <!-- 512 MB; default is 5 GiB -->
+  <primary_index_cache_size>134217728</primary_index_cache_size>  <!-- 128 MB; default is 5 GiB -->
+  <uncompressed_cache_size>0</uncompressed_cache_size>      <!-- disabled; OS page cache is sufficient -->
+
+  <metric_log remove="1"/>
+  <asynchronous_metric_log remove="1"/>
+  <text_log remove="1"/>
+  <processors_profile_log remove="1"/>
+  <query_views_log remove="1"/>
+  <blob_storage_log remove="1"/>
+  <query_metric_log remove="1"/>
+
+  <zookeeper>
+    <node>
+      <host>ch-keeper</host>
+      <port>9181</port>
+    </node>
+  </zookeeper>
+
+  <macros>
+    <shard>01</shard>
+    <replica>01</replica>
+  </macros>
+
+  <remote_servers>
+    <observability_cluster>
+      <secret from_env="CH_REPLICATION_SECRET"/>
+      <shard>
+        <internal_replication>true</internal_replication>
+        <replica>
+          <host>ch-01</host>
+          <port>9000</port>
+          <user>telemetry_writer</user>
+          <password from_env="CH_PASSWORD"/>
+        </replica>
+      </shard>
+    </observability_cluster>
+  </remote_servers>
+</clickhouse>

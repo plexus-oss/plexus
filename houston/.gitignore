@@ -1,0 +1,18 @@
+# Secrets + local state
+.env
+.env.local
+.env.deploy
+rules-cache.json
+rules-cache.json.tmp
+
+# Build artifacts
+alert-service
+*.exe
+*.test
+*.out
+
+# Editor / OS
+.DS_Store
+*.swp
+.vscode/
+.idea/

@@ -1,0 +1,67 @@
+#
+# plexus-ch-loader — Redis → ClickHouse batch inserter.
+#
+# Stateless. Reads `telemetry.stream:*` from gateway-redis via 6PN, writes
+# to plexus-ch via 6PN. No volume. Currently also exposes a temporary public
+# [http_service] on 8080 for the recording push (see the note above it and
+# TODO.md — reverting to internal-only is still an open task).
+#
+# ─── First-time setup ───────────────────────────────────────────────────
+#   fly apps create plexus-ch-loader --org plexus-725
+#
+#   # Secrets (set once; persisted in Fly, not in this file):
+#   fly secrets set -a plexus-ch-loader \
+#       REDIS_URL='redis://plexus-gateway-redis.internal:6379' \
+#       CH_PASSWORD='...'
+#
+#   fly deploy -c loader/fly.toml
+#
+# No volume, no Tigris. Purely stateless. Fly machine auto-restart
+# handles crashes; Redis PEL absorbs the ~20-30s ingest pause during
+# restart. See SCALING.md for the two-replica + XAUTOCLAIM path when
+# HA becomes a real requirement.
+#
+
+app = "plexus-ch-loader"
+primary_region = "iad"
+
+[build]
+  dockerfile = "Dockerfile"
+
+# ── Machine size ────────────────────────────────────────────────────────
+# shared-cpu-1x + 512 MB is overkill for the current throughput
+# (~10k rows/sec ceiling requires ~5% of this machine's capacity).
+# Bump memory before CPU if batches start OOM'ing — the loader holds
+# BATCH_SIZE rows in memory during the insert, which at 5000 rows *
+# ~200 bytes/row = ~1 MB peak, so 512 MB is very comfortable.
+[[vm]]
+  size   = "shared-cpu-1x"
+  memory = "512mb"
+
+# ── Non-secret env ──────────────────────────────────────────────────────
+# CH_HOST is constant across deploys; REDIS_URL and CH_PASSWORD are
+# secrets (see fly secrets set above).
+[env]
+  CH_HOST  = "plexus-ch.internal"
+  CH_TABLE = "plexus.telemetry_dist"
+
+# ── Public endpoint + healthcheck ───────────────────────────────────────
+# POST /recording is called by the Next.js frontend when a source's recording
+# status changes. The frontend now runs on Fly and reaches this loader over 6PN
+# (frontend PLEXUS_LOADER_URL -> plexus-ch-loader.internal:8080), so the old
+# Vercel-can't-reach-6PN justification for the public port no longer holds — see
+# TODO.md. Protected by x-internal-secret. The health GET / is also accessible
+# publicly; it exposes only operational metrics, no user data.
+[http_service]
+  internal_port        = 8080
+  force_https          = true
+  auto_stop_machines   = "off"
+  auto_start_machines  = true
+  min_machines_running = 1
+
+  [[http_service.checks]]
+    grace_period = "30s"
+    interval     = "30s"
+    method       = "GET"
+    path         = "/"
+    timeout      = "5s"

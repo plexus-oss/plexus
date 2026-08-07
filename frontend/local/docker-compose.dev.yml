@@ -1,0 +1,261 @@
+# =============================================================================
+# Plexus — one-click local backend (Model A: build from sibling source)
+#
+# Runs the full Dockerized backend for local development. The FRONTEND is NOT
+# here — it runs natively on the host via `npm run dev` (hot reload). Postgres
+# is NOT here either — it comes from the frontend repo's own tooling
+# (`npm run db:up`, the pgvector image the schema needs).
+#
+# This file lives in frontend/local/, so paths reach the sibling repos via
+# ../../ (the workspace root that holds all the service checkouts).
+#
+# Wiring (see dev-setup.sh for env generation):
+#   host  → containers   via published ports on localhost (8080/8081/8082/8123/9000)
+#   containers → host frontend   via http://host.docker.internal:3000
+#   data-api → host Postgres      via host.docker.internal:5432 (single DB)
+#   PLEXUS_INTERNAL_SECRET is shared between here and frontend/.env.development.local
+#
+# Driven by `make dev`. Manual (from this dir):
+#   docker compose --env-file .env -f docker-compose.dev.yml up -d --build
+# =============================================================================
+
+x-frontend-host: &frontend-host http://host.docker.internal:3000
+x-extra-hosts: &extra-hosts
+  - "host.docker.internal:host-gateway"   # so backend→host frontend works on Linux too
+
+services:
+  # ── Gateway (build ../../gateway) ───────────────────────────────────────────
+  gateway:
+    build: ../../gateway
+    image: plexus-dev/gateway:local
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    environment:
+      GATEWAY_MODE: prod
+      GATEWAY_ADDR: ":8080"
+      REDIS_URL: redis:6379
+      PLEXUS_API_URL: *frontend-host
+      PLEXUS_INTERNAL_SECRET: ${PLEXUS_INTERNAL_SECRET}
+      GATEWAY_ALLOWED_ORIGINS: http://localhost:3000
+    extra_hosts: *extra-hosts
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  # ── Redis (stream spine) ────────────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: redis-server --maxmemory 512mb --maxmemory-policy noeviction
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  # ── ClickHouse (real schema: ON CLUSTER + ReplicatedMergeTree + tiered/S3) ──
+  # Reuses the clickhouse repo's server configs as the single source of truth.
+  # MinIO is the S3 cold tier so `storage_policy = 'tiered'` applies cleanly
+  # (data only ages to cold after 7 days, so locally the bucket just needs to
+  # exist).
+  #
+  # hostname MUST be ch-01: config.xml's observability_cluster names ch-01 as
+  # the sole replica, and the ON CLUSTER DDL in schema.sql only executes when
+  # the server recognizes itself in the cluster definition.
+  clickhouse:
+    image: clickhouse/clickhouse-server:26.3
+    hostname: ch-01
+    restart: unless-stopped
+    depends_on:
+      clickhouse-keeper:
+        condition: service_started
+      minio:
+        condition: service_healthy
+    environment:
+      # users.xml resolves password hashes via from_env=; config.xml needs the
+      # writer plaintext (cluster replica credentials) + replication secret.
+      # All generated into local/.env by dev-setup.sh — dev-only values.
+      CH_WRITER_PASSWORD_SHA256: ${CH_WRITER_PASSWORD_SHA256}
+      CH_READER_PASSWORD_SHA256: ${CH_READER_PASSWORD_SHA256}
+      CH_ADMIN_PASSWORD_SHA256: ${CH_ADMIN_PASSWORD_SHA256}
+      CH_PASSWORD: ${CH_WRITER_PASSWORD}
+      CH_REPLICATION_SECRET: ${CH_REPLICATION_SECRET:-}
+      # The entrypoint runs the initdb scripts (schema.sql) AS this user and
+      # creates CLICKHOUSE_DB first. users.xml removes `default`, so init must
+      # run as a real user; a dedicated bootstrap name avoids colliding with
+      # the users defined in users.xml. Also what wait-for-keeper.sh
+      # authenticates as.
+      CLICKHOUSE_USER: bootstrap
+      CLICKHOUSE_PASSWORD: ${CH_ADMIN_PASSWORD}
+      CLICKHOUSE_DB: plexus
+      # disks.xml resolves both S3 endpoints via from_env= — both must be set
+      # or config loading fails. Buckets are created by minio-init below.
+      AWS_ACCESS_KEY_ID: ${MINIO_ROOT_USER:-plexus}
+      AWS_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD}
+      CLICKHOUSE_S3_COLD_ENDPOINT: http://minio:9000/plexus-ch-cold/
+      CLICKHOUSE_S3_BACKUP_ENDPOINT: http://minio:9000/plexus-ch-backup/
+    ports:
+      - "8123:8123"        # HTTP — the native host-run frontend reads over this
+    volumes:
+      - ../../clickhouse/server/configs/clickhouse/config.xml:/etc/clickhouse-server/config.d/config.xml:ro
+      - ../../clickhouse/server/configs/clickhouse/users.xml:/etc/clickhouse-server/users.d/users.xml:ro
+      - ../../clickhouse/server/configs/clickhouse/disks.xml:/etc/clickhouse-server/config.d/disks.xml:ro
+      - ../../clickhouse/server/init/wait-for-keeper.sh:/docker-entrypoint-initdb.d/00-wait-for-keeper.sh:ro
+      - ../../clickhouse/server/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+      - ch_data:/var/lib/clickhouse
+      - ch_logs:/var/log/clickhouse-server
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8123/ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  # hostname MUST be ch-keeper: config.xml's <zookeeper> node and the keeper
+  # config's own Raft self-identifier both name ch-keeper.
+  clickhouse-keeper:
+    image: clickhouse/clickhouse-keeper:26.3-alpine
+    restart: unless-stopped
+    hostname: ch-keeper
+    volumes:
+      - ../../clickhouse/server/configs/keeper/keeper_config.xml:/etc/clickhouse-keeper/keeper_config.xml:ro
+      - keeper_data:/var/lib/clickhouse-keeper
+
+  # ── ch-loader (build ../../clickhouse/loader) ───────────────────────────────
+  ch-loader:
+    build: ../../clickhouse/loader
+    image: plexus-dev/ch-loader:local
+    restart: unless-stopped
+    ports:
+      - "8082:8080"        # loader health — frontend PLEXUS_LOADER_URL=http://localhost:8082
+    environment:
+      REDIS_URL: redis://redis:6379
+      CH_HOST: clickhouse
+      # Same ingest user as prod (users.xml): telemetry_writer over HTTP 8123.
+      CH_USER: telemetry_writer
+      CH_PASSWORD: ${CH_WRITER_PASSWORD}
+      PLEXUS_API_URL: *frontend-host
+      PLEXUS_INTERNAL_SECRET: ${PLEXUS_INTERNAL_SECRET}
+    extra_hosts: *extra-hosts
+    depends_on:
+      redis:
+        condition: service_healthy
+      clickhouse:
+        condition: service_healthy
+
+  # ── alert-service (build ../../houston — repo plexus-private/houston) ───────
+  alert-service:
+    build: ../../houston
+    image: plexus-dev/alert-service:local
+    restart: unless-stopped
+    ports:
+      - "8081:8081"        # frontend pushes rules here — PLEXUS_ALERT_SERVICE_URL=http://localhost:8081
+    environment:
+      ALERTD_MODE: prod
+      ALERTD_ADDR: ":8081"
+      REDIS_URL: redis:6379
+      PLEXUS_API_URL: *frontend-host
+      PLEXUS_INTERNAL_SECRET: ${PLEXUS_INTERNAL_SECRET}
+    extra_hosts: *extra-hosts
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  # ── data-api (build ../../api — repo plexus-private/api) ────────────────────
+  # Uses the frontend's Postgres (host) for plx_ API-key auth — one DB, not two.
+  # Ancillary: off by default; started with `EXTRAS=1 make backend/dev`.
+  data-api:
+    profiles: ["extras"]
+    build: ../../api
+    image: plexus-dev/data-api:local
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      DATABASE_URL: postgresql://postgres:postgres@host.docker.internal:5432/plexus
+      REDIS_URL: redis://redis:6379
+      CLICKHOUSE_HOST: clickhouse
+      # clickhouse_connect speaks HTTP — 8123, not the native 9000.
+      CLICKHOUSE_PORT: "8123"
+      CLICKHOUSE_DATABASE: plexus
+      CLICKHOUSE_USER: telemetry_writer
+      CLICKHOUSE_PASSWORD: ${CH_WRITER_PASSWORD}
+      GATEWAY_URL: ws://gateway:8080
+      INTERNAL_SECRET: ${PLEXUS_INTERNAL_SECRET}
+    extra_hosts: *extra-hosts
+    depends_on:
+      redis:
+        condition: service_healthy
+      clickhouse:
+        condition: service_healthy
+      gateway:
+        condition: service_started
+
+  # ── recorder (build ../../video-recorder — repo plexus-private/video-recorder)
+  # Behind its own profile (NOT extras): most checkouts don't have the repo
+  # cloned, and compose fails at build time on a missing context. To run it:
+  #   git clone git@github.com:plexus-private/video-recorder.git ../../video-recorder
+  #   docker compose --env-file .env -f docker-compose.dev.yml --profile recorder up -d --build
+  recorder:
+    profiles: ["recorder"]
+    build: ../../video-recorder
+    image: plexus-dev/recorder:local
+    restart: unless-stopped
+    environment:
+      RECORDER_GATEWAY_WS_URL: ws://gateway:8080
+      RECORDER_FRONTEND_URL: *frontend-host
+      RECORDER_TMP_DIR: /tmp/recorder
+      AWS_ACCESS_KEY_ID: ${MINIO_ROOT_USER:-plexus}
+      AWS_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD}
+      AWS_ENDPOINT_URL: http://minio:9000
+      AWS_REGION: us-east-1
+      BUCKET_NAME: plexus-recordings
+    extra_hosts: *extra-hosts
+    volumes:
+      - recorder_tmp:/tmp/recorder
+    depends_on:
+      gateway:
+        condition: service_started
+
+  # ── MinIO (S3: recorder uploads + ClickHouse cold tier) ─────────────────────
+  minio:
+    image: minio/minio:latest
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-plexus}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      # minio/minio:latest ships curl but NOT wget (unlike the other images).
+      test: ["CMD", "curl", "-fsS", "http://localhost:9000/minio/health/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  minio-init:
+    image: minio/mc:latest
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: >
+      /bin/sh -c "
+      mc alias set local http://minio:9000 ${MINIO_ROOT_USER:-plexus} ${MINIO_ROOT_PASSWORD};
+      mc mb local/plexus-recordings --ignore-existing;
+      mc mb local/plexus-ch-cold --ignore-existing;
+      mc mb local/plexus-ch-backup --ignore-existing;
+      "
+
+volumes:
+  redis_data:
+  ch_data:
+  ch_logs:
+  keeper_data:
+  minio_data:
+  recorder_tmp:

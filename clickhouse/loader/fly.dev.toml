@@ -1,0 +1,45 @@
+# Dev CH loader — plexus-ch-loader-dev in the plexus-dev org.
+# Stateless, internal-only. Reads telemetry.stream:* from dev Redis, writes to
+# dev ClickHouse. Same size as prod (512MB shared — already cheap). 1 machine.
+#
+# Create + deploy (after Redis + CH server are up):
+#   flyctl apps create plexus-ch-loader-dev --org plexus-dev
+#   flyctl secrets set -a plexus-ch-loader-dev \
+#       REDIS_URL='redis://plexus-gateway-redis-dev.internal:6379' \
+#       CH_PASSWORD='<telemetry_writer plaintext — must match plexus-ch-dev CH_PASSWORD>'
+#   flyctl deploy --app plexus-ch-loader-dev --config clickhouse/loader/fly.dev.toml
+#
+# PLEXUS_API_URL / PLEXUS_INTERNAL_SECRET omitted; the loader fails closed
+# without them, so RECORDING_FILTER_DISABLED=1 opts into dev/no-filter mode
+# (all sources persisted, POST /recording unauthenticated). Set the two
+# secrets and drop the flag if you want the loader to query the dev frontend
+# for recording-enabled sources.
+
+app = 'plexus-ch-loader-dev'
+primary_region = 'iad'
+
+[build]
+  dockerfile = 'Dockerfile'
+
+[[vm]]
+  size   = 'shared-cpu-1x'
+  memory = '512mb'
+
+[env]
+  CH_HOST  = 'plexus-ch-dev.internal'
+  CH_TABLE = 'plexus.telemetry_dist'
+  RECORDING_FILTER_DISABLED = '1'
+
+[http_service]
+  internal_port        = 8080
+  force_https          = true
+  auto_stop_machines   = 'off'
+  auto_start_machines  = true
+  min_machines_running = 1
+
+  [[http_service.checks]]
+    grace_period = '30s'
+    interval     = '30s'
+    method       = 'GET'
+    path         = '/'
+    timeout      = '5s'

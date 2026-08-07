@@ -1,0 +1,41 @@
+name: db-schema
+
+# Fails the build when lib/db/schema.ts has drifted ahead of the committed
+# Drizzle migrations — i.e. someone changed the schema (often via
+# `drizzle-kit push`) without running `npm run db:generate` and committing the
+# result. Migration-built databases (fresh envs, prod release_command) would
+# silently be missing those columns; this catches it at PR time instead.
+
+on:
+  pull_request:
+    paths:
+      - 'lib/db/schema.ts'
+      - 'lib/db/migrations/**'
+      - 'drizzle.config.ts'
+  push:
+    branches: [main]
+
+jobs:
+  migrations-in-sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: schema.ts must have a committed migration
+        env:
+          # drizzle-kit generate is offline (diffs schema.ts against the
+          # snapshot, no DB connection). drizzle.config.ts still references
+          # DATABASE_URL, so a dummy value satisfies it.
+          DATABASE_URL: postgresql://u:p@localhost:5432/db
+        run: |
+          npx drizzle-kit generate --name ci_drift_check
+          if [ -n "$(git status --porcelain lib/db/migrations)" ]; then
+            echo "::error::schema.ts has changes with no committed migration. Run 'npm run db:generate' locally and commit the generated files."
+            git --no-pager diff -- lib/db/migrations
+            exit 1
+          fi
+          echo "✓ migrations are in sync with schema.ts"

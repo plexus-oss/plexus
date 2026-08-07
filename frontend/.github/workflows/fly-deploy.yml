@@ -1,0 +1,34 @@
+name: fly-deploy
+
+# Auto-deploy to prod (plexus-frontend) on every push to main.
+# Dev (plexus-frontend-dev) deploys separately via the Fly GitHub integration.
+# FLY_API_TOKEN is a deploy token scoped to the plexus-frontend app.
+
+# Runs only after the `ci` workflow (lint + typecheck + test) succeeds on main.
+on:
+  workflow_run:
+    workflows: [ci]
+    types: [completed]
+    branches: [main]
+
+# Queue (not cancel) overlapping deploys — cancelling flyctl mid-rollout can
+# leave machines on mixed versions.
+concurrency:
+  group: fly-deploy-prod
+
+jobs:
+  deploy:
+    # ci also runs on pull_request; only deploy for push-to-main runs that passed.
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Deploy the exact commit CI validated, not whatever main points at now.
+          ref: ${{ github.event.workflow_run.head_sha }}
+      - uses: superfly/flyctl-actions/setup-flyctl@master
+      - run: flyctl deploy --remote-only --config fly.toml
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}

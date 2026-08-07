@@ -1,0 +1,26 @@
+# Local dev env files — real secrets, never commit
+server/.env
+loader/.env
+
+# Fly deploy env files — real secrets, never commit
+server/.env.deploy
+loader/.env.deploy
+
+# Local compose overrides (machine-specific, e.g. port remaps)
+server/docker-compose.override.yml
+loader/docker-compose.override.yml
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+*.egg-info/
+uv.lock
+
+# Editor / OS noise
+.DS_Store
+.idea/
+.vscode/
+*.swp
