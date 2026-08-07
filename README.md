@@ -26,7 +26,7 @@ your hardware should have no strings):
 ## Self-host
 
 ```
-curl -fsSL https://raw.githubusercontent.com/plexus-oss/plexus/main/selfhost/install.sh | bash
+curl -fsSL https://plexus.company/install.sh | bash
 ```
 
 Four questions, every secret generated locally, the whole platform up on your
@@ -52,5 +52,7 @@ unlocked by an offline license key; a single team never hits a paywall.
 | Air-gapped release channel + CVE SLA | | key |
 | Support entitlements | | key |
 
-Plain-language details: [docs/licensing.md](docs/licensing.md). Contributions
-require a DCO sign-off: [CONTRIBUTING.md](CONTRIBUTING.md).
+Plain-language details: [docs/licensing.md](docs/licensing.md). Buying,
+installing, and renewing a key: [docs/enterprise.md](docs/enterprise.md).
+Contributions require a DCO sign-off: [CONTRIBUTING.md](CONTRIBUTING.md).
+Vulnerability reports: [SECURITY.md](SECURITY.md).

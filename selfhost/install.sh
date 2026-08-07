@@ -2,7 +2,7 @@
 #
 # Plexus self-host installer.
 #
-#   curl -fsSL https://raw.githubusercontent.com/plexus-oss/plexus/main/selfhost/install.sh | bash
+#   curl -fsSL https://plexus.company/install.sh | bash
 #
 # One repo, a few questions, every secret generated locally, the whole
 # platform up with docker compose. Prefers prebuilt images from ghcr.io
