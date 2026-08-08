@@ -149,7 +149,7 @@ func deviceReadLoop(ctx context.Context, conn *DeviceConn, hub *Hub) {
 			if err != nil {
 				continue
 			}
-			hub.RelayVideoFrame(conn.orgID, camID, relayData)
+			hub.RelayVideoFrame(conn.orgID, conn.sourceID, camID, relayData)
 			if camID != "" && !seenCameras[camID] {
 				seenCameras[camID] = true
 				hub.AnnounceCamera(conn, camID, "normal")
@@ -207,7 +207,7 @@ func deviceReadLoop(ctx context.Context, conn *DeviceConn, hub *Hub) {
 				continue
 			}
 			cameraID, _ := msg["camera_id"].(string)
-			hub.RelayVideoFrame(conn.orgID, cameraID, data)
+			hub.RelayVideoFrame(conn.orgID, conn.sourceID, cameraID, data)
 			if cameraID != "" && !seenCameras[cameraID] {
 				seenCameras[cameraID] = true
 				videoType, _ := msg["video_type"].(string)

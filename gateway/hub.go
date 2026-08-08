@@ -322,8 +322,11 @@ func (h *Hub) snapshotBrowsers(orgID string) []*BrowserConn {
 // RelayVideoFrame sends a video frame from a device to browsers for that org.
 // Frames are ephemeral; slow browsers drop them rather than blocking the relay.
 // Only relays to browsers subscribed to this camera_id (or all if subscription is empty).
+// sourceID is the originating device; browsers whose camera subscribe carried a
+// source_id scope only receive frames from that source (camera IDs are not
+// unique across an org — every device defaults to "default").
 // Uses camera subscription registry for O(1) lookup when available.
-func (h *Hub) RelayVideoFrame(orgID string, cameraID string, frame []byte) {
+func (h *Hub) RelayVideoFrame(orgID string, sourceID string, cameraID string, frame []byte) {
 	// Snapshot the subscriber set while still holding the lock —
 	// Subscribe/UnsubscribeCamera mutate the same map under h.mu.Lock, so
 	// iterating it after RUnlock is a fatal concurrent map iteration.
@@ -346,6 +349,14 @@ func (h *Hub) RelayVideoFrame(orgID string, cameraID string, frame []byte) {
 	now := time.Now().UnixNano()
 	for _, bc := range targets {
 		if !bc.subs.Video {
+			continue
+		}
+		// Source scope: subscriptions made with a source_id only receive
+		// frames originating from that source.
+		bc.mu.Lock()
+		videoSourceID := bc.videoSourceID
+		bc.mu.Unlock()
+		if videoSourceID != "" && videoSourceID != sourceID {
 			continue
 		}
 		// Check throttle (hidden tab)

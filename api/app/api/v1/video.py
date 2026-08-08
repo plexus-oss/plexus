@@ -52,7 +52,9 @@ async def stream_video(
     gw_url = settings.gateway_url.rstrip("/") + "/ws/browser"
 
     try:
-        await asyncio.wait_for(_proxy(websocket, gw_url, api_key, camera_id), timeout=timeout)
+        await asyncio.wait_for(
+            _proxy(websocket, gw_url, api_key, source_id, camera_id), timeout=timeout
+        )
     except asyncio.TimeoutError:
         try:
             await websocket.close(code=4008, reason="stream timeout")
@@ -67,7 +69,9 @@ async def stream_video(
             pass
 
 
-async def _proxy(websocket: WebSocket, gw_url: str, api_key: str, cameras: list[str]):
+async def _proxy(
+    websocket: WebSocket, gw_url: str, api_key: str, source_id: str, cameras: list[str]
+):
     """
     Proxy frames from gateway to client with transparent gateway reconnection.
 
@@ -90,7 +94,11 @@ async def _proxy(websocket: WebSocket, gw_url: str, api_key: str, cameras: list[
                 init_text = init_raw if isinstance(init_raw, str) else init_raw.decode()
                 await websocket.send_text(init_text)
 
-                await gw_ws.send(json.dumps({"type": "subscribe", "cameras": cameras}))
+                # source_id scopes the stream to this device's cameras — camera
+                # IDs are not unique across an org (every device has "default").
+                await gw_ws.send(
+                    json.dumps({"type": "subscribe", "source_id": source_id, "cameras": cameras})
+                )
 
                 retries = 0  # reset on successful connection
 
