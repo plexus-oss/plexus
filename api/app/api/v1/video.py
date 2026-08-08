@@ -102,8 +102,17 @@ async def _proxy(
 
                 retries = 0  # reset on successful connection
 
+                # The gateway pushes org-wide frames (source_status, heartbeat,
+                # event, command_result) to every browser-class connection.
+                # This stream is documented as device-scoped video — forward
+                # only video_frame, like metrics/logs filter to their types.
                 async for msg in gw_ws:
                     text = msg if isinstance(msg, str) else msg.decode()
+                    try:
+                        if json.loads(text).get("type") != "video_frame":
+                            continue
+                    except (ValueError, AttributeError):
+                        continue
                     await websocket.send_text(text)
 
         except (websockets.exceptions.ConnectionClosed,
