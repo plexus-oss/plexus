@@ -109,6 +109,30 @@ export const CreateDashboardSchema = z.object({
 });
 export type CreateDashboard = z.infer<typeof CreateDashboardSchema>;
 
+/**
+ * Grafana dashboard import (POST /api/dashboards/import/grafana).
+ * `dashboard` is deliberately unvalidated JSON — the converter
+ * (lib/import/grafana.ts) is total and reports malformed shapes instead of
+ * rejecting them. Omitting `bindings` makes the request a dry run.
+ */
+export const GrafanaImportSchema = z.object({
+  dashboard: z.unknown(),
+  bindings: z
+    .record(
+      z.string(),
+      z.object({
+        sourceRef: z
+          .string()
+          .min(1)
+          .regex(SLUG_PATTERN, SLUG_ERROR),
+        metric: z.string().min(1),
+      }),
+    )
+    .optional(),
+  name: z.string().max(120).optional(),
+});
+export type GrafanaImport = z.infer<typeof GrafanaImportSchema>;
+
 export const UpdateDashboardSchema = z.object({
   name: z.string().min(1).optional(),
   description: z.string().optional(),

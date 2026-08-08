@@ -28,6 +28,7 @@ export type EntityType =
 export const ACTION_IDS = [
   // Actions — toolbar
   "action-new-dashboard",
+  "action-import-grafana-dashboard",
   "action-new-alert",
   "action-pair-device",
   "action-connect-data",

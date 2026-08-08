@@ -57,6 +57,8 @@ interface TemplateGalleryProps {
   initialSourceSlug?: string;
   /** When provided, the footer offers a quiet "Start blank instead" path. */
   onStartBlank?: () => void;
+  /** When provided, the left rail offers the Grafana import path. */
+  onImportGrafana?: () => void;
 }
 
 export function TemplateGallery({
@@ -64,6 +66,7 @@ export function TemplateGallery({
   onClose,
   initialSourceSlug,
   onStartBlank,
+  onImportGrafana,
 }: TemplateGalleryProps) {
   const router = useRouter();
   const { devices } = useSources();
@@ -200,6 +203,29 @@ export function TemplateGallery({
                 builds itself
               </span>
             </button>
+            {onImportGrafana && (
+              <>
+                <div className="text-[9px] uppercase tracking-wider text-muted-foreground font-medium px-2 pb-1">
+                  Migrate
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    onClose();
+                    onImportGrafana();
+                  }}
+                  className="w-full flex flex-col gap-0.5 px-2 py-1.5 rounded transition-colors text-left mb-2 hover:bg-muted/60 text-muted-foreground hover:text-foreground"
+                >
+                  <span className="text-[11px] font-medium">
+                    Import from Grafana
+                  </span>
+                  <span className="text-[10px] text-muted-foreground">
+                    Paste a dashboard JSON export — panels, layout, and units
+                    carry over
+                  </span>
+                </button>
+              </>
+            )}
             <div className="text-[9px] uppercase tracking-wider text-muted-foreground font-medium px-2 pb-1">
               Templates
             </div>

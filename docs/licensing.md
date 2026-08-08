@@ -23,7 +23,7 @@ Everything a single team needs to run Plexus in production:
 - Dashboards and instruments
 - Alerts and monitors
 - Single-team auth
-- Grafana migration tooling
+- Grafana dashboard import
 - Self-hosting the whole platform (see the self-host bundle)
 
 There are no usage caps on the free tier and the software **never phones home**
