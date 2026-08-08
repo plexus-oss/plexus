@@ -194,7 +194,7 @@ export async function POST(request: NextRequest) {
 
         // Mark condition cleared. Do NOT touch status — resolved/acknowledged
         // are user workflow actions, not alert-service concerns.
-        await adminAlertQueries.update(t.org_id, openAlert.id, {
+        const updated = await adminAlertQueries.update(t.org_id, openAlert.id, {
           is_alert_active: false,
           closed_at: timestampIso,
           ...(t.stats ? { alert_stats: t.stats } : {}),
@@ -214,6 +214,33 @@ export async function POST(request: NextRequest) {
             },
           },
         );
+
+        // Auto-clear notifies — docs promise `alert.resolved` when a
+        // condition clears, and the other resolve paths (manual resolve,
+        // offline recovery in lib/alerts/detect-offline.ts) already emit it.
+        // Same pipeline as those paths: triggerAlertWebhook fans out to
+        // generic webhooks + Slack/email notification_deliveries + the
+        // system event. Flapping needs no new debounce here: the
+        // alert-service owns open/close hysteresis upstream, and the unique
+        // open index guarantees exactly one open per (rule, source) — so
+        // each clear emits at most once, paired with one alert.triggered.
+        // Status is still untouched (user workflow), only the emission
+        // suppression is lifted.
+        try {
+          await runWithServiceRole(() =>
+            triggerAlertWebhook(
+              t.org_id,
+              updated ?? openAlert,
+              source,
+              "alert.resolved",
+            ),
+          );
+        } catch (err) {
+          console.error(
+            "[transitions] resolved webhook dispatch failed:",
+            err,
+          );
+        }
 
         processed++;
       } else {
