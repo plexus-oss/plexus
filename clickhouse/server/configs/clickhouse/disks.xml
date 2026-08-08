@@ -15,6 +15,10 @@
         <access_key_id from_env="AWS_ACCESS_KEY_ID"/>
         <secret_access_key from_env="AWS_SECRET_ACCESS_KEY"/>
         <region>auto</region>
+        <!-- Don't probe S3 at startup: lets the server boot when the cold
+             tier is unconfigured (self-host tiering-off) or briefly down;
+             errors surface on first actual use instead. -->
+        <skip_access_check>true</skip_access_check>
         <metadata_path>/var/lib/clickhouse/disks/s3_cold/</metadata_path>
       </s3_cold>
 
@@ -27,6 +31,7 @@
         <access_key_id from_env="AWS_ACCESS_KEY_ID"/>
         <secret_access_key from_env="AWS_SECRET_ACCESS_KEY"/>
         <region>auto</region>
+        <skip_access_check>true</skip_access_check>
         <metadata_path>/var/lib/clickhouse/disks/s3_backup/</metadata_path>
       </s3_backup>
     </disks>

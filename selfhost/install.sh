@@ -99,12 +99,14 @@ if [ "$S3_TIERING" = "1" ]; then
   CH_S3_BACKUP_ENDPOINT="http://minio:9000/plexus-backup/"
   UPLOADS_ENDPOINT="http://minio:9000"
 else
-  # Blank endpoints = ClickHouse never initializes the S3 disks (lazy init;
-  # same pattern as clickhouse/server/docker-compose.yml) and the frontend's
-  # upload routes gate themselves off (503) instead of dialing a MinIO that
-  # isn't running.
-  CH_S3_COLD_ENDPOINT=""
-  CH_S3_BACKUP_ENDPOINT=""
+  # ClickHouse requires syntactically valid disk endpoints at config parse
+  # even when no table ever uses them (blank = boot crash in DiskSelector).
+  # Point them at the (absent) MinIO host — with skip_access_check in
+  # disks.xml nothing ever connects, since the transformed schema uses the
+  # 'default' policy only. The frontend's upload routes see the blank
+  # endpoint below and gate themselves off (503) instead of dialing MinIO.
+  CH_S3_COLD_ENDPOINT="http://minio:9000/plexus-cold/"
+  CH_S3_BACKUP_ENDPOINT="http://minio:9000/plexus-backup/"
   UPLOADS_ENDPOINT=""
 fi
 
