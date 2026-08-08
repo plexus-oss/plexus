@@ -18,6 +18,7 @@ venv/
 # Compiled binaries
 gateway/gateway
 houston/alert-service
+houston/houston
 
 # Local data dirs
 gateway/data/
