@@ -1,0 +1,51 @@
+# Signs the five app images for a given release tag with the Plexus cosign
+# key (the enterprise signed-release channel — see docs/enterprise.md).
+# Runs automatically after release-images completes for a tag, and can be
+# dispatched manually to (re)sign an existing tag.
+name: sign-release
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to sign (e.g. v0.2.0)"
+        required: true
+  workflow_run:
+    workflows: [release-images]
+    types: [completed]
+
+permissions:
+  packages: write
+  contents: read
+
+jobs:
+  sign:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+       startsWith(github.event.workflow_run.head_branch, 'v'))
+    runs-on: ubuntu-latest
+    env:
+      TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.event.workflow_run.head_branch }}
+    steps:
+      - uses: sigstore/cosign-installer@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Sign images by digest
+        env:
+          COSIGN_PRIVATE_KEY: ${{ secrets.COSIGN_PRIVATE_KEY }}
+          COSIGN_PASSWORD: ${{ secrets.COSIGN_PASSWORD }}
+        run: |
+          set -euo pipefail
+          for name in gateway houston api ch-loader frontend; do
+            ref="ghcr.io/${{ github.repository }}/${name}:${TAG}"
+            digest=$(docker buildx imagetools inspect "$ref" --format '{{json .Manifest}}' | jq -r .digest)
+            cosign sign --key env://COSIGN_PRIVATE_KEY --yes \
+              "ghcr.io/${{ github.repository }}/${name}@${digest}"
+            echo "signed ${name}@${digest}"
+          done

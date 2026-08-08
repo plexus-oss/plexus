@@ -177,10 +177,28 @@ jobs:
 
           tar -cf - "${BUNDLE}" | zstd -T0 -10 -o "plexus-airgap-${TAG}.tar.zst"
           ls -lh "plexus-airgap-${TAG}.tar.zst"
+          sha256sum "plexus-airgap-${TAG}.tar.zst" > "plexus-airgap-${TAG}.tar.zst.sha256"
+
+      # Enterprise signed-release channel: cosign bundle over the tarball.
+      # License holders receive cosign.pub and verify with
+      #   cosign verify-blob --key cosign.pub --bundle <bundle> --new-bundle-format <tarball>
+      - uses: sigstore/cosign-installer@v3
+      - name: Sign bundle
+        env:
+          COSIGN_PRIVATE_KEY: ${{ secrets.COSIGN_PRIVATE_KEY }}
+          COSIGN_PASSWORD: ${{ secrets.COSIGN_PASSWORD }}
+        run: |
+          cosign sign-blob --key env://COSIGN_PRIVATE_KEY --yes \
+            --new-bundle-format \
+            --bundle "plexus-airgap-${{ github.ref_name }}.tar.zst.cosign.bundle" \
+            "plexus-airgap-${{ github.ref_name }}.tar.zst"
 
       - name: Attach to GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           # Creates the release for the pushed tag if it doesn't exist yet.
           generate_release_notes: true
-          files: plexus-airgap-${{ github.ref_name }}.tar.zst
+          files: |
+            plexus-airgap-${{ github.ref_name }}.tar.zst
+            plexus-airgap-${{ github.ref_name }}.tar.zst.sha256
+            plexus-airgap-${{ github.ref_name }}.tar.zst.cosign.bundle

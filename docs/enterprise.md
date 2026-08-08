@@ -44,3 +44,24 @@ The token format and verification code are public:
 `frontend/lib/licensing/token.ts`. You can confirm exactly what a key
 grants — org, features, expiry — by base64url-decoding its middle segment;
 the Ed25519 signature proves it came from us.
+
+## Signed releases (enterprise)
+
+Every release's images and air-gap bundle are signed with the Plexus cosign
+key. The free tier gets the artifacts; an enterprise license gets the
+**verification public key** (delivered with your license key) plus the CVE
+patch SLA, so your supply-chain review can prove that what you deploy is
+what we shipped:
+
+```
+# container images
+cosign verify --key cosign.pub ghcr.io/plexus-oss/plexus/gateway:v0.2.0
+
+# the air-gap bundle
+cosign verify-blob --key cosign.pub \
+  --bundle plexus-airgap-v0.2.0.tar.zst.cosign.bundle --new-bundle-format \
+  plexus-airgap-v0.2.0.tar.zst
+```
+
+A `sha256` checksum also ships next to every bundle for basic integrity
+(no license needed).
