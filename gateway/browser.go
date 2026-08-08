@@ -58,6 +58,7 @@ type BrowserConn struct {
 	metricsDeviceID string
 	metricsFilter   map[string]struct{} // nil = all metrics for this device
 	logsDeviceID    string
+	videoSourceID   string // camera subscribe scope; "" = org-wide (dashboard browsers)
 
 	// Video session metering. registeredAt is set at auth time; lastEmittedAt
 	// advances on each periodic sweep and final disconnect emit so each record
@@ -263,11 +264,18 @@ func browserReadLoop(ctx context.Context, conn *BrowserConn, hub *Hub) {
 					}
 				}
 
+				// Optional source scope: when present, only frames from this
+				// source's cameras are relayed (data-api proxy sets it; the
+				// dashboard omits it and stays org-wide). Same field name as
+				// the metrics/logs subscribe frames.
+				sourceID, _ := msg["source_id"].(string)
+
 				fps, _ := msg["max_fps"].(float64)
 				conn.mu.Lock()
 				conn.cameras = newCameras
 				conn.maxFps = int(fps)
 				conn.lastSentNs = make(map[string]int64)
+				conn.videoSourceID = sourceID
 				conn.mu.Unlock()
 			}
 

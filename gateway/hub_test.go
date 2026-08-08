@@ -150,11 +150,49 @@ func TestRelayVideoFrame_ConcurrentSubscribeSafe(t *testing.T) {
 	// Relay frames concurrently from the test goroutine while churn runs.
 	frame := []byte(`{"type":"video_frame"}`)
 	for i := 0; i < 20_000; i++ {
-		h.RelayVideoFrame("org1", "cam0", frame)
+		h.RelayVideoFrame("org1", "src0", "cam0", frame)
 	}
 
 	close(stop)
 	wg.Wait()
+}
+
+func TestRelayVideoFrame_SourceScoped(t *testing.T) {
+	// A camera subscribe carrying source_id must only receive frames from that
+	// source — camera IDs are not unique across an org (every device defaults
+	// to "default"), so /v1/sources/{id}/video/stream would otherwise leak
+	// other devices' streams. Unscoped subscribers (dashboard) get everything.
+	h := minimalHub()
+
+	newBrowser := func(scope string) *BrowserConn {
+		return &BrowserConn{
+			orgID:         "org1",
+			subs:          BrowserSubs{Video: true},
+			sendCh:        make(chan []byte, 8),
+			lastSentNs:    make(map[string]int64),
+			videoSourceID: scope,
+		}
+	}
+
+	scoped := newBrowser("src-a")
+	unscoped := newBrowser("")
+	h.SubscribeCamera(scoped, "default")
+	h.SubscribeCamera(unscoped, "default")
+
+	frameA := []byte(`{"from":"src-a"}`)
+	frameB := []byte(`{"from":"src-b"}`)
+	h.RelayVideoFrame("org1", "src-a", "default", frameA)
+	h.RelayVideoFrame("org1", "src-b", "default", frameB)
+
+	if got := len(scoped.sendCh); got != 1 {
+		t.Fatalf("scoped browser: want 1 frame (src-a only), got %d", got)
+	}
+	if string(<-scoped.sendCh) != string(frameA) {
+		t.Fatalf("scoped browser received the wrong source's frame")
+	}
+	if got := len(unscoped.sendCh); got != 2 {
+		t.Fatalf("unscoped browser: want both frames, got %d", got)
+	}
 }
 
 func TestUnregisterBrowser_CleansEmptyCameraSubSets(t *testing.T) {
