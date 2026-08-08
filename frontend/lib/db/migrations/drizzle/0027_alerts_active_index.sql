@@ -1,0 +1,2 @@
+DROP INDEX "idx_alerts_one_open_per_rule_source";--> statement-breakpoint
+CREATE UNIQUE INDEX "idx_alerts_one_open_per_rule_source" ON "alerts" USING btree ("org_id","rule_id","source_id") WHERE ((is_alert_active = true) AND (rule_id IS NOT NULL));

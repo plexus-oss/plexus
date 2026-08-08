@@ -229,6 +229,66 @@ describe("POST /api/internal/alerts/transitions — auto-clear (closed)", () => 
     );
   });
 
+  it("allows a re-open after auto-clear (unique index gates on is_alert_active, not status)", async () => {
+    // Regression for `alerts-open-index-drizzle-vs-supabase`: prod (supabase
+    // 00038) gates idx_alerts_one_open_per_rule_source on is_alert_active,
+    // while the drizzle chain gated on status='open' — so this second open
+    // would 23505 in the test DB even though prod inserts cleanly (the first
+    // row keeps status='open' after auto-clear).
+    const slug = uniqueSlug();
+    await insertSource(slug);
+    const ruleId = await insertRule(slug);
+
+    const transition = {
+      rule_id: ruleId,
+      org_id: ORG,
+      source_id: slug,
+      metric: "cpu_temp",
+      threshold: 90,
+      severity: "warning",
+    };
+
+    const openRes = await postTransitions([
+      {
+        ...transition,
+        state: "open",
+        value: 95,
+        timestamp: Math.floor(Date.now() / 1000),
+      },
+    ]);
+    expect(openRes.status).toBe(204);
+
+    const closeRes = await postTransitions([
+      {
+        ...transition,
+        state: "closed",
+        value: 70,
+        timestamp: Math.floor(Date.now() / 1000),
+      },
+    ]);
+    expect(closeRes.status).toBe(204);
+
+    const reopenRes = await postTransitions([
+      {
+        ...transition,
+        state: "open",
+        value: 96,
+        timestamp: Math.floor(Date.now() / 1000),
+      },
+    ]);
+    expect(reopenRes.status).toBe(204);
+
+    const rows = await db
+      .select()
+      .from(alerts)
+      .where(eq(alerts.rule_id, ruleId));
+    expect(rows).toHaveLength(2);
+    // Old row: condition cleared, status untouched (user workflow).
+    // New row: firing again.
+    expect(rows.filter((r) => r.is_alert_active).length).toBe(1);
+    expect(rows.every((r) => r.status === "open")).toBe(true);
+  });
+
   it("is a no-op (no emission) when no matching open alert exists", async () => {
     const slug = uniqueSlug();
     await insertSource(slug);

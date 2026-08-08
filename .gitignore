@@ -28,3 +28,7 @@ clickhouse/**/data/
 .idea/
 .vscode/
 *.swp
+
+# Local tool state (rescued from pre-monorepo checkouts)
+.claude/
+.vercel/

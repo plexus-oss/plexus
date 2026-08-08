@@ -31,9 +31,12 @@ export const RETENTION_MULTIPLIER: ReadonlyArray<[days: number, mult: number]> =
   [1095, 4.0], // 3-year (today's default raw retention)
 ];
 
-/** Price per 1M Anthropic tokens billed to the customer (cost × markup). Set per model. */
+/** Price per 1M Anthropic tokens billed to the customer (cost × markup).
+ * Default matches the live Stripe price object ($12/M blended) so in-app
+ * estimates agree with invoices; override per-deploy via env if the Stripe
+ * price ever changes. */
 export const PRICE_PER_MILLION_AI_TOKENS_USD = Number(
-  process.env.BILLING_PRICE_PER_MILLION_AI_TOKENS_USD ?? "5.00",
+  process.env.BILLING_PRICE_PER_MILLION_AI_TOKENS_USD ?? "12.00",
 );
 
 export function retentionMultiplier(retentionDays: number): number {

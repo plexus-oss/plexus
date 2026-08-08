@@ -12,6 +12,9 @@ permissions:
 
 jobs:
   build:
+    permissions:
+      contents: read
+      packages: write
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -62,3 +65,122 @@ jobs:
             NEXT_PUBLIC_BILLING_ENABLED=false
           cache-from: type=gha,scope=${{ matrix.name }}
           cache-to: type=gha,mode=max,scope=${{ matrix.name }}
+
+  # Air-gapped release bundle: every image the compose stack runs (the five
+  # app images just published PLUS the public infra images — postgres, valkey,
+  # clickhouse, keeper, minio — without which an offline `compose up` dies),
+  # the tagged source (a git archive, so the installer's checkout-mode path
+  # detection finds ../gateway etc.), the selfhost/ dir for quick reference,
+  # LICENSE + NOTICE, and generated offline instructions. One zstd tarball,
+  # attached to the GitHub Release for the tag.
+  airgap-bundle:
+    runs-on: ubuntu-latest
+    needs: build
+    permissions:
+      contents: write # create the release + upload the asset
+      packages: read
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # ~5 GB of images uncompressed exist twice for a moment (docker store +
+      # saved tar); reclaim the runner's preinstalled cruft first.
+      - name: Free runner disk
+        run: |
+          sudo rm -rf /usr/local/lib/android /opt/hostedtoolcache/CodeQL /usr/share/dotnet
+          docker system prune -af
+          df -h /
+
+      - name: Assemble bundle
+        env:
+          TAG: ${{ github.ref_name }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          BUNDLE="plexus-airgap-${TAG}"
+          mkdir -p "${BUNDLE}"
+
+          # The five app images published by the build job (v-prefixed tag —
+          # matches PLEXUS_VERSION=<tag> in the offline install), plus the
+          # infra images pinned in selfhost/docker-compose.yml. Keep this
+          # list in sync with the compose file.
+          IMAGES=()
+          for name in gateway houston api ch-loader frontend; do
+            IMAGES+=("ghcr.io/${REPO}/${name}:${TAG}")
+          done
+          IMAGES+=(
+            pgvector/pgvector:pg17
+            valkey/valkey:8-alpine
+            clickhouse/clickhouse-server:26.3.3.20
+            clickhouse/clickhouse-keeper:26.3.3.20-alpine
+            minio/minio
+            minio/mc
+          )
+          for img in "${IMAGES[@]}"; do
+            docker pull --platform linux/amd64 "$img"
+          done
+          docker save -o "${BUNDLE}/images.tar" "${IMAGES[@]}"
+          docker system prune -af # tar written; drop the image-store copy
+          df -h /
+
+          # Tagged source tree — self-contained: the installer runs in
+          # checkout mode from here (it requires ../gateway to exist).
+          git archive --format=tar.gz --prefix=plexus/ \
+            -o "${BUNDLE}/plexus-src-${TAG}.tar.gz" HEAD
+
+          cp -R selfhost "${BUNDLE}/selfhost"
+          rm -f "${BUNDLE}/selfhost/.env" # never ship an operator's secrets
+          cp LICENSE NOTICE "${BUNDLE}/"
+
+          cat > "${BUNDLE}/AIRGAP.md" <<EOF
+          # Plexus ${TAG} — air-gapped install
+
+          Everything needed to run Plexus offline is in this bundle: all
+          container images, the tagged source, and these steps. The stack
+          makes no outbound calls (license validation is offline by design).
+
+          On a machine inside the boundary, with Docker + Compose v2, git,
+          and OpenSSL installed:
+
+          \`\`\`sh
+          # 1. Load every container image (app + postgres/valkey/clickhouse/minio)
+          docker load -i images.tar
+
+          # 2. Unpack the tagged source — the installer must run from this
+          #    tree (its path detection expects gateway/ etc. beside selfhost/)
+          tar -xzf plexus-src-${TAG}.tar.gz
+
+          # 3. Run the installer pinned to this release. It detects the
+          #    loaded ${TAG} images and starts without touching the network.
+          cd plexus
+          PLEXUS_VERSION=${TAG} ./selfhost/install.sh
+          \`\`\`
+
+          Answer the hostname question with the host's LAN name or IP; skip
+          the Anthropic and Resend keys (they call external services). With
+          no Resend key, sign-in codes print to
+          \`docker compose logs -f frontend\`. The S3 tiered-storage question
+          works either way — the MinIO image is included.
+
+          The top-level \`selfhost/\` directory in this bundle is a reference
+          copy only — run the installer from the extracted source tree above.
+
+          Enterprise features unlock with an offline license key:
+          \`selfhost/.env\` → \`PLEXUS_LICENSE\`. See \`docs/licensing.md\`
+          in the source tree.
+          EOF
+
+          tar -cf - "${BUNDLE}" | zstd -T0 -10 -o "plexus-airgap-${TAG}.tar.zst"
+          ls -lh "plexus-airgap-${TAG}.tar.zst"
+
+      - name: Attach to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          # Creates the release for the pushed tag if it doesn't exist yet.
+          generate_release_notes: true
+          files: plexus-airgap-${{ github.ref_name }}.tar.zst
