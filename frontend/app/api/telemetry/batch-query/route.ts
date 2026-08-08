@@ -20,7 +20,8 @@ export const POST = withDualAuth(
   async (request, { orgId, userId, orgRole, isApiKeyAuth }) => {
   const { queries } = await validateBody(request, BatchQuerySchema);
 
-  type PointRow = { timestamp: string; value: number; min?: number; max?: number; source_id?: string | null };
+  // sum/count = per-bucket totals of raw events, for tier-independent client aggregation (see AdaptivePoint)
+  type PointRow = { timestamp: string; value: number; min?: number; max?: number; sum?: number; count?: number; source_id?: string | null };
   const results: Record<string, { data: Record<string, PointRow[]>; resolution: ResolutionLevel }> = {};
 
   // Deduplicate: group by (timeRange, sourceId?) → set of metrics
@@ -99,6 +100,8 @@ export const POST = withDualAuth(
             value: p.value,
             ...(p.min !== undefined && { min: p.min }),
             ...(p.max !== undefined && { max: p.max }),
+            ...(p.sum !== undefined && { sum: p.sum }),
+            ...(p.count !== undefined && { count: p.count }),
             ...(sourceId && sourceId !== "*" && { source_id: sourceId }),
           }));
         });

@@ -11,6 +11,10 @@ import {
   formatPanelValue,
   type ValueNotation,
 } from "@/lib/dashboard/format-value";
+import {
+  aggregateOverWindow,
+  sumOverWindow,
+} from "@/lib/panels/aggregate";
 
 interface StatPanelProps {
   panel: Panel;
@@ -163,7 +167,11 @@ export function StatPanel({ panel, timeRange }: StatPanelProps) {
       );
 
       // Multi-source path — reduce across each key's latest value.
-      // "count" is also handled here so it works even with one key.
+      // "count" is also handled here so it works even with one key: panel-level
+      // "count" means number of SOURCES with data in the window (see
+      // lib/types/dashboard.ts Aggregation) — NOT the raw event count. The
+      // tier-independent event count lives in lib/panels/aggregate.ts
+      // countOverWindow and only applies where a series is reduced over time.
       if (aggregation === "count" || keysWithData.length > 1) {
         const derivedName = metric.includes(":")
           ? metric.split(":")[1]
@@ -211,7 +219,15 @@ export function StatPanel({ panel, timeRange }: StatPanelProps) {
             agg = Math.max(...vs);
             break;
           case "sum":
-            agg = vs.reduce((a, b) => a + b, 0);
+            // Σ of raw event values across every source's whole window
+            // (p.sum ?? p.value per point) — NOT Σ of per-source latest
+            // values: on downsampled tiers "latest value" is a bucket
+            // average, which makes counter totals tier-dependent. Matches
+            // the single-source path's sum-over-window semantics.
+            agg = keysWithData.reduce(
+              (acc, k) => acc + sumOverWindow(data[k]),
+              0,
+            );
             break;
           case "last":
           default: {
@@ -257,26 +273,14 @@ export function StatPanel({ panel, timeRange }: StatPanelProps) {
         .filter((v): v is number => typeof v === "number");
       const recent = vals.slice(-(panel.config.trendWindow ?? 20));
 
+      // Tier-independent reduction (lib/panels/aggregate.ts): sum/avg use the
+      // per-bucket sum/count carried by downsampled points so a counter shows
+      // the same total whether the window hit raw data or a rollup tier.
+      // ("count" never reaches this path — it's intercepted above as
+      // number-of-sources; the lib's count means raw event count.)
       let aggregatedValue: number | string = last.value;
       if (vals.length > 0) {
-        switch (aggregation) {
-          case "avg":
-            aggregatedValue = vals.reduce((a, b) => a + b, 0) / vals.length;
-            break;
-          case "min":
-            aggregatedValue = Math.min(...vals);
-            break;
-          case "max":
-            aggregatedValue = Math.max(...vals);
-            break;
-          case "sum":
-            aggregatedValue = vals.reduce((a, b) => a + b, 0);
-            break;
-          case "last":
-          default:
-            aggregatedValue = vals[vals.length - 1];
-            break;
-        }
+        aggregatedValue = aggregateOverWindow(points, aggregation) ?? last.value;
       }
 
       let trend = 0;

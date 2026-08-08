@@ -10,7 +10,14 @@
 
 import { createContext } from "react";
 
-type PointRow = { timestamp: string; value: number; source_id?: string | null };
+type PointRow = {
+  timestamp: string;
+  value: number;
+  /** Per-bucket raw-event totals for downsampled points (see TelemetryPoint). */
+  sum?: number;
+  count?: number;
+  source_id?: string | null;
+};
 type QueryResult = Record<string, PointRow[]>;
 
 interface PendingQuery {

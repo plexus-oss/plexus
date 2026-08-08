@@ -85,6 +85,9 @@ export const GET = withDualAuth(
       value: number;
       min?: number;
       max?: number;
+      /** Per-bucket sum/count of raw events — lets clients compute tier-independent totals (see AdaptivePoint). */
+      sum?: number;
+      count?: number;
       source_id?: string | null;
     };
     type ResultType = Record<string, PointType[]>;
@@ -121,6 +124,8 @@ export const GET = withDualAuth(
               value: point.value,
               ...(point.min !== undefined && { min: point.min }),
               ...(point.max !== undefined && { max: point.max }),
+              ...(point.sum !== undefined && { sum: point.sum }),
+              ...(point.count !== undefined && { count: point.count }),
               ...(sourceId !== "*" && { source_id: sourceId }),
             });
           }

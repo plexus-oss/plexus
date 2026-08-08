@@ -28,7 +28,17 @@ import { normalizeMetrics } from "@/lib/normalize-metrics";
  */
 export interface TelemetryPoint {
   timestamp: string;
+  /** Raw value (raw resolution) or bucket AVERAGE (downsampled/rollup resolutions). */
   value: number;
+  /**
+   * Per-bucket totals of the raw events behind a downsampled point, forwarded
+   * from the server's AdaptivePoint (lib/db/clickhouse.ts). Absent on realtime
+   * WS points and legacy payloads — consumers must fall back to
+   * `sum ?? value` / `count ?? 1` (see lib/panels/aggregate.ts). Without these,
+   * summing `value` across downsampled points counts buckets, not events.
+   */
+  sum?: number;
+  count?: number;
   source_id?: string | null;
 }
 
