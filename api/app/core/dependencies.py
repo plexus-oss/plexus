@@ -29,7 +29,7 @@ async def require_auth(x_api_key: str = Header(default="")) -> str:
             status_code=402,
             detail={
                 "error": "payment_required",
-                "message": f"Add a payment method at {settings.app_url}/dev/settings?tab=billing",
+                "message": f"Add a payment method at {settings.app_url}/settings?tab=billing",
             },
         )
     return org_id
