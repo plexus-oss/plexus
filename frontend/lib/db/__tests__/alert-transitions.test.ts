@@ -1,0 +1,282 @@
+/**
+ * /api/internal/alerts/transitions — behavior tests.
+ *
+ * Exercises the real route handler against the test DB, with only the
+ * outermost delivery effects mocked (generic-webhook scheduling, Slack/email
+ * notification dispatch, system-event emission). The shared fan-out in
+ * lib/webhooks/events runs for real, so these tests prove the route feeds
+ * the same pipeline the manual-resolve and offline-recovery paths use.
+ *
+ * Key behavior under test: auto-clear ("closed" transition) emits
+ * `alert.resolved` + notifications while leaving `status` untouched
+ * (resolved/acknowledged remain user workflow actions).
+ */
+
+import { describe, it, expect, vi, beforeEach } from "vitest";
+import { randomUUID } from "node:crypto";
+import { eq } from "drizzle-orm";
+import { NextRequest } from "next/server";
+import { db } from "../client";
+import { alertRules, alerts, sources } from "../schema";
+
+vi.mock("@/lib/webhooks/dispatcher", () => ({
+  scheduleWebhookDelivery: vi.fn().mockResolvedValue(undefined),
+}));
+vi.mock("@/lib/notifications/deliver", () => ({
+  dispatchNotifications: vi.fn().mockResolvedValue(undefined),
+}));
+vi.mock("@/lib/events/emit", () => ({
+  emitSystemEvent: vi.fn(),
+}));
+
+import { scheduleWebhookDelivery } from "@/lib/webhooks/dispatcher";
+import { dispatchNotifications } from "@/lib/notifications/deliver";
+import { emitSystemEvent } from "@/lib/events/emit";
+import { POST } from "@/app/api/internal/alerts/transitions/route";
+
+const SECRET = "test-internal-secret";
+process.env.PLEXUS_INTERNAL_SECRET = SECRET;
+
+const ORG = "test-org";
+
+function postTransitions(
+  transitions: unknown[],
+  secret: string = SECRET,
+): Promise<Response> {
+  const request = new NextRequest(
+    "http://localhost/api/internal/alerts/transitions",
+    {
+      method: "POST",
+      headers: { "x-internal-secret": secret },
+      body: JSON.stringify({ transitions }),
+    },
+  );
+  return POST(request);
+}
+
+async function insertSource(slug: string): Promise<string> {
+  const [row] = await db
+    .insert(sources)
+    .values({
+      org_id: ORG,
+      slug,
+      name: slug,
+      source_type: "device",
+      status: "online",
+    } as typeof sources.$inferInsert)
+    .returning();
+  return row.id;
+}
+
+/** alerts.rule_id is a real FK; alert_rules.source_id keys by SLUG. */
+async function insertRule(slug: string): Promise<string> {
+  const [row] = await db
+    .insert(alertRules)
+    .values({
+      org_id: ORG,
+      source_id: slug,
+      type: "threshold",
+      metric: "cpu_temp",
+      conditions: {},
+      severity: "warning",
+      enabled: true,
+    } as typeof alertRules.$inferInsert)
+    .returning();
+  return row.id;
+}
+
+async function insertActiveRuleAlert(
+  sourceUuid: string,
+  ruleId: string,
+): Promise<string> {
+  const [row] = await db
+    .insert(alerts)
+    .values({
+      org_id: ORG,
+      source_id: sourceUuid,
+      rule_id: ruleId,
+      trigger_type: "alert_rule",
+      metric: "cpu_temp",
+      value: 95,
+      threshold: 90,
+      severity: "warning",
+      status: "open",
+      is_alert_active: true,
+    } as typeof alerts.$inferInsert)
+    .returning();
+  return row.id;
+}
+
+async function getAlert(id: string) {
+  const rows = await db.select().from(alerts).where(eq(alerts.id, id)).limit(1);
+  return rows[0];
+}
+
+// NOTE: the route caches slug→source for 60s at module level, so every test
+// uses a unique slug to stay clear of rows truncated between tests.
+let testId = 0;
+function uniqueSlug(): string {
+  return `dev-${++testId}-${randomUUID().slice(0, 8)}`;
+}
+
+beforeEach(() => {
+  vi.clearAllMocks();
+});
+
+describe("POST /api/internal/alerts/transitions — auth", () => {
+  it("rejects a bad internal secret", async () => {
+    const res = await postTransitions([], "wrong-secret");
+    expect(res.status).toBe(401);
+  });
+});
+
+describe("POST /api/internal/alerts/transitions — open", () => {
+  it("creates the alert and emits alert.triggered", async () => {
+    const slug = uniqueSlug();
+    await insertSource(slug);
+    const ruleId = await insertRule(slug);
+
+    const res = await postTransitions([
+      {
+        rule_id: ruleId,
+        org_id: ORG,
+        source_id: slug,
+        metric: "cpu_temp",
+        state: "open",
+        value: 95,
+        threshold: 90,
+        severity: "warning",
+        timestamp: Math.floor(Date.now() / 1000),
+      },
+    ]);
+    expect(res.status).toBe(204);
+
+    const rows = await db
+      .select()
+      .from(alerts)
+      .where(eq(alerts.rule_id, ruleId));
+    expect(rows).toHaveLength(1);
+    expect(rows[0].is_alert_active).toBe(true);
+    expect(rows[0].status).toBe("open");
+
+    expect(scheduleWebhookDelivery).toHaveBeenCalledWith(
+      ORG,
+      "alert.triggered",
+      expect.anything(),
+      expect.anything(),
+      null,
+    );
+    expect(dispatchNotifications).toHaveBeenCalledWith(
+      ORG,
+      "alert.triggered",
+      expect.objectContaining({ alertId: rows[0].id }),
+      null,
+    );
+  });
+});
+
+describe("POST /api/internal/alerts/transitions — auto-clear (closed)", () => {
+  it("flips the condition, keeps status, and emits alert.resolved + notifications", async () => {
+    const slug = uniqueSlug();
+    const sourceUuid = await insertSource(slug);
+    const ruleId = await insertRule(slug);
+    const alertId = await insertActiveRuleAlert(sourceUuid, ruleId);
+
+    const closedAt = Math.floor(Date.now() / 1000);
+    const res = await postTransitions([
+      {
+        rule_id: ruleId,
+        org_id: ORG,
+        source_id: slug,
+        metric: "cpu_temp",
+        state: "closed",
+        value: 70,
+        threshold: 90,
+        severity: "warning",
+        timestamp: closedAt,
+      },
+    ]);
+    expect(res.status).toBe(204);
+
+    // Condition cleared…
+    const row = await getAlert(alertId);
+    expect(row.is_alert_active).toBe(false);
+    expect(row.closed_at).not.toBeNull();
+    // …but status stays a user-workflow field.
+    expect(row.status).toBe("open");
+    expect(row.resolved_at).toBeNull();
+
+    // Resolved event + notifications go through the shared pipeline.
+    expect(scheduleWebhookDelivery).toHaveBeenCalledWith(
+      ORG,
+      "alert.resolved",
+      expect.anything(),
+      sourceUuid,
+      null,
+    );
+    expect(dispatchNotifications).toHaveBeenCalledWith(
+      ORG,
+      "alert.resolved",
+      expect.objectContaining({ alertId }),
+      null,
+    );
+    expect(emitSystemEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        orgId: ORG,
+        eventType: "alert.resolved",
+        entityId: alertId,
+      }),
+    );
+  });
+
+  it("is a no-op (no emission) when no matching open alert exists", async () => {
+    const slug = uniqueSlug();
+    await insertSource(slug);
+
+    const res = await postTransitions([
+      {
+        rule_id: randomUUID(),
+        org_id: ORG,
+        source_id: slug,
+        metric: "cpu_temp",
+        state: "closed",
+        value: 70,
+        threshold: 90,
+        severity: "warning",
+        timestamp: Math.floor(Date.now() / 1000),
+      },
+    ]);
+    expect(res.status).toBe(204);
+
+    expect(scheduleWebhookDelivery).not.toHaveBeenCalled();
+    expect(dispatchNotifications).not.toHaveBeenCalled();
+    expect(emitSystemEvent).not.toHaveBeenCalled();
+  });
+
+  it("does not re-emit for an alert whose condition already cleared", async () => {
+    const slug = uniqueSlug();
+    const sourceUuid = await insertSource(slug);
+    const ruleId = await insertRule(slug);
+    const alertId = await insertActiveRuleAlert(sourceUuid, ruleId);
+    await db
+      .update(alerts)
+      .set({ is_alert_active: false, closed_at: new Date().toISOString() })
+      .where(eq(alerts.id, alertId));
+
+    const res = await postTransitions([
+      {
+        rule_id: ruleId,
+        org_id: ORG,
+        source_id: slug,
+        metric: "cpu_temp",
+        state: "closed",
+        value: 70,
+        threshold: 90,
+        severity: "warning",
+        timestamp: Math.floor(Date.now() / 1000),
+      },
+    ]);
+    expect(res.status).toBe(204);
+    expect(dispatchNotifications).not.toHaveBeenCalled();
+  });
+});
