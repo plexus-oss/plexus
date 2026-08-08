@@ -996,7 +996,7 @@ export async function ensureHourlyRollup(): Promise<void> {
           avg(value) AS avg_value,
           min(value) AS min_value,
           max(value) AS max_value,
-          sum(value) AS sum_value,
+          sum(value) AS bucket_sum,
           stddevPop(value) AS stddev_value
         FROM telemetry
         GROUP BY org_id, source_id, metric, hour
@@ -1026,7 +1026,7 @@ export async function queryHourlyRollup(
     avg_value: number;
     min_value: number;
     max_value: number;
-    sum_value: number | string;
+    bucket_sum: number | string;
   }>
 > {
   const client = getClient();
@@ -1040,7 +1040,7 @@ export async function queryHourlyRollup(
           sum(sum_value) / sum(count_value) AS avg_value,
           min(min_value) AS min_value,
           max(max_value) AS max_value,
-          sum(sum_value) AS sum_value
+          sum(sum_value) AS bucket_sum
         FROM telemetry_1hr FINAL
         WHERE org_id = {orgId:String}
           AND source_id = {sourceId:String}
@@ -1066,7 +1066,7 @@ export async function queryHourlyRollup(
       avg_value: number;
       min_value: number;
       max_value: number;
-      sum_value: number | string;
+      bucket_sum: number | string;
     }>;
   } catch (error) {
     // Rollup table might not exist yet — not a fatal error
@@ -1148,7 +1148,7 @@ export async function queryMinuteRollup(
     avg_value: number;
     min_value: number;
     max_value: number;
-    sum_value: number | string;
+    bucket_sum: number | string;
   }>
 > {
   const client = getClient();
@@ -1165,7 +1165,7 @@ export async function queryMinuteRollup(
           sum(sum_value) / sum(count_value) AS avg_value,
           min(min_value) AS min_value,
           max(max_value) AS max_value,
-          sum(sum_value) AS sum_value
+          sum(sum_value) AS bucket_sum
         FROM telemetry_1min FINAL
         WHERE org_id = {orgId:String}
           AND source_id = {sourceId:String}
@@ -1191,7 +1191,7 @@ export async function queryMinuteRollup(
       avg_value: number;
       min_value: number;
       max_value: number;
-      sum_value: number | string;
+      bucket_sum: number | string;
     }>;
   } catch (error) {
     console.warn(
@@ -1298,7 +1298,7 @@ export async function queryTelemetryAdaptive(
             avg(value) AS avg_value,
             min(value) AS min_value,
             max(value) AS max_value,
-            sum(value) AS sum_value,
+            sum(value) AS bucket_sum,
             count() AS cnt
           FROM telemetry
           WHERE org_id = {orgId:String}
@@ -1324,7 +1324,7 @@ export async function queryTelemetryAdaptive(
         avg_value: number;
         min_value: number;
         max_value: number;
-        sum_value: number | string;
+        bucket_sum: number | string;
         cnt: number | string;
       }>;
 
@@ -1344,7 +1344,7 @@ export async function queryTelemetryAdaptive(
             typeof r.max_value === "string"
               ? parseFloat(r.max_value)
               : r.max_value,
-          sum: chNumber(r.sum_value),
+          sum: chNumber(r.bucket_sum),
           count: chNumber(r.cnt),
         })),
       };
@@ -1398,7 +1398,7 @@ export async function queryTelemetryAdaptive(
             typeof r.max_value === "string"
               ? parseFloat(r.max_value as string)
               : r.max_value,
-          sum: chNumber(r.sum_value),
+          sum: chNumber(r.bucket_sum),
           count: chNumber(r.point_count),
         })),
       };
@@ -1439,7 +1439,7 @@ export async function queryTelemetryAdaptive(
         avg_value: number;
         min_value: number;
         max_value: number;
-        sum_value: number | string;
+        bucket_sum: number | string;
         cnt: number | string;
       }>;
 
@@ -1459,7 +1459,7 @@ export async function queryTelemetryAdaptive(
             typeof r.max_value === "string"
               ? parseFloat(r.max_value)
               : r.max_value,
-          sum: chNumber(r.sum_value),
+          sum: chNumber(r.bucket_sum),
           count: chNumber(r.cnt),
         })),
       };
@@ -1494,7 +1494,7 @@ export async function queryTelemetryAdaptive(
           typeof r.max_value === "string"
             ? parseFloat(r.max_value as string)
             : r.max_value,
-        sum: chNumber(r.sum_value),
+        sum: chNumber(r.bucket_sum),
         count: chNumber(r.point_count),
       })),
     };
@@ -1511,7 +1511,7 @@ export async function queryTelemetryAdaptive(
           avg(value) AS avg_value,
           min(value) AS min_value,
           max(value) AS max_value,
-          sum(value) AS sum_value,
+          sum(value) AS bucket_sum,
           count() AS cnt
         FROM telemetry
         WHERE org_id = {orgId:String}
@@ -1537,7 +1537,7 @@ export async function queryTelemetryAdaptive(
       avg_value: number;
       min_value: number;
       max_value: number;
-      sum_value: number | string;
+      bucket_sum: number | string;
       cnt: number | string;
     }>;
 
@@ -1557,7 +1557,7 @@ export async function queryTelemetryAdaptive(
           typeof r.max_value === "string"
             ? parseFloat(r.max_value)
             : r.max_value,
-        sum: chNumber(r.sum_value),
+        sum: chNumber(r.bucket_sum),
         count: chNumber(r.cnt),
       })),
     };
