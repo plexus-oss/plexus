@@ -10,6 +10,12 @@
 # Boot order: postgres → migrate → clickhouse (keeper + schema) → valkey →
 # frontend → gateway / loader / houston / api. Houston and the loader retry
 # until the frontend answers; that's expected on first boot.
+#
+# MinIO (S3 cold tier + uploads) sits behind the `s3` compose profile:
+# install.sh adds `--profile s3` when .env has PLEXUS_S3_TIERING=1 — or when
+# the var is missing, which means the .env predates the option and MinIO was
+# always on. With the profile off, ch-init applies a local-disk-only variant
+# of the schema (see ch-schema-local.sh).
 
 name: plexus
 
@@ -71,8 +77,14 @@ services:
     hostname: ch-01 # cluster + macros in config.xml expect this name
     restart: unless-stopped
     depends_on:
-      - ch-keeper
-      - minio-init
+      ch-keeper:
+        condition: service_started
+      # Buckets must exist before the first cold-tier write. `required: false`
+      # (compose >= 2.20) makes compose skip — not reject — this dependency
+      # when the s3 profile is off and minio-init isn't part of the stack.
+      minio-init:
+        condition: service_completed_successfully
+        required: false
     volumes:
       - ../clickhouse/server/configs/clickhouse/config.xml:/etc/clickhouse-server/config.d/config.xml:ro
       - ../clickhouse/server/configs/clickhouse/users.xml:/etc/clickhouse-server/users.d/users.xml:ro
@@ -86,19 +98,26 @@ services:
       CH_WRITER_PASSWORD_SHA256: ${CH_WRITER_PASSWORD_SHA256}
       CH_READER_PASSWORD_SHA256: ${CH_READER_PASSWORD_SHA256}
       CH_ADMIN_PASSWORD_SHA256: ${CH_ADMIN_PASSWORD_SHA256}
-      # Cold/backup tiers land in the bundled MinIO (schema uses the
-      # 'tiered' storage policy, so these are required).
+      # Cold/backup tiers land in the bundled MinIO when S3 tiering is on.
+      # With tiering off the installer writes the endpoint vars EMPTY —
+      # ClickHouse initializes disks lazily, so blank endpoints are safe as
+      # long as no table uses the 'tiered' policy (ch-schema-local.sh
+      # guarantees that; same pattern as clickhouse/server/docker-compose.yml).
+      # The `-` (no colon) defaults only fire when the var is MISSING, i.e.
+      # for pre-option .env files, which keep today's MinIO endpoints.
       AWS_ACCESS_KEY_ID: ${MINIO_ROOT_USER}
       AWS_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD}
-      CLICKHOUSE_S3_COLD_ENDPOINT: http://minio:9000/plexus-cold/
-      CLICKHOUSE_S3_BACKUP_ENDPOINT: http://minio:9000/plexus-backup/
+      CLICKHOUSE_S3_COLD_ENDPOINT: ${CLICKHOUSE_S3_COLD_ENDPOINT-http://minio:9000/plexus-cold/}
+      CLICKHOUSE_S3_BACKUP_ENDPOINT: ${CLICKHOUSE_S3_BACKUP_ENDPOINT-http://minio:9000/plexus-backup/}
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:8123/ping"]
       interval: 5s
       timeout: 3s
       retries: 30
 
-  # One-shot: applies the reference DDL once ClickHouse answers.
+  # One-shot: applies the reference DDL once ClickHouse answers. With S3
+  # tiering off, ch-schema-local.sh rewrites the DDL to local-disk storage
+  # (storage_policy 'default', cold-tier TTL moves stripped) before applying.
   ch-init:
     image: clickhouse/clickhouse-server:26.3.3.20
     restart: "no"
@@ -107,14 +126,16 @@ services:
         condition: service_healthy
     volumes:
       - ../clickhouse/server/schema.sql:/schema.sql:ro
-    entrypoint: ["/bin/sh", "-c"]
-    command:
-      - clickhouse-client --host ch-01 --user admin --password "$$CH_ADMIN_PASSWORD" --multiquery < /schema.sql
+      - ./ch-schema-local.sh:/ch-schema-local.sh:ro
+    entrypoint: ["/bin/sh", "/ch-schema-local.sh"]
     environment:
       CH_ADMIN_PASSWORD: ${CH_ADMIN_PASSWORD}
+      # Missing (pre-option .env) = 1, so existing installs keep the tiered schema.
+      PLEXUS_S3_TIERING: ${PLEXUS_S3_TIERING:-1}
 
   minio:
     image: minio/minio
+    profiles: ["s3"]
     restart: unless-stopped
     command: ["server", "/data"]
     environment:
@@ -130,6 +151,7 @@ services:
 
   minio-init:
     image: minio/mc
+    profiles: ["s3"]
     restart: "no"
     depends_on:
       minio:
@@ -169,10 +191,14 @@ services:
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       # Enterprise license key (optional; missing = free tier, silently).
       PLEXUS_LICENSE: ${PLEXUS_LICENSE:-}
-      # Icon/context uploads land in the bundled MinIO.
-      TIGRIS_ENDPOINT: http://minio:9000
-      TIGRIS_ACCESS_KEY_ID: ${MINIO_ROOT_USER}
-      TIGRIS_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD}
+      # Icon/context uploads land in the bundled MinIO. With S3 tiering off
+      # (no MinIO) the installer writes these EMPTY: blank credentials make
+      # the upload routes gate themselves off cleanly (lib/storage/s3.ts
+      # isStorageConfigured → 503) instead of dialing a host that isn't there.
+      # `-` defaults fire only when MISSING (pre-option .env files).
+      TIGRIS_ENDPOINT: ${TIGRIS_ENDPOINT-http://minio:9000}
+      TIGRIS_ACCESS_KEY_ID: ${TIGRIS_ACCESS_KEY_ID-${MINIO_ROOT_USER}}
+      TIGRIS_SECRET_ACCESS_KEY: ${TIGRIS_SECRET_ACCESS_KEY-${MINIO_ROOT_PASSWORD}}
       TIGRIS_BUCKET_ICONS: plexus-assets
       TIGRIS_BUCKET_CONTEXT: plexus-assets
     depends_on:

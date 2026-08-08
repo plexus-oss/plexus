@@ -497,7 +497,7 @@ export const alerts = pgTable(
         table.rule_id.asc().nullsLast(),
         table.source_id.asc().nullsLast(),
       )
-      .where(sql`((status = 'open'::alert_status) AND (rule_id IS NOT NULL))`),
+      .where(sql`((is_alert_active = true) AND (rule_id IS NOT NULL))`),
     foreignKey({
       columns: [table.limit_id],
       foreignColumns: [sourceLimits.id],

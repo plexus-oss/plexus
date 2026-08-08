@@ -1,4 +1,4 @@
-module github.com/plexus-oss/alert-service
+module github.com/plexus-oss/plexus/houston
 
 go 1.26.1
 

@@ -1,4 +1,4 @@
-module github.com/plexus-oss/gateway
+module github.com/plexus-oss/plexus/gateway
 
 go 1.26.1
 
