@@ -9,6 +9,7 @@ import { Input } from "@/components/ui/input";
 import { EmptyState } from "@/components/ui/empty-state";
 import { DashboardCard } from "@/components/dashboard/dashboard-card";
 import { TemplateGallery } from "@/components/dashboard/template-gallery";
+import { GrafanaImportSheet } from "@/components/dashboard/grafana-import-sheet";
 import { useDashboards } from "@/hooks/use-dashboards";
 import { useRole } from "@/hooks/use-role";
 import { ACTION_NEW_DASHBOARD } from "@/lib/shortcuts";
@@ -21,6 +22,7 @@ export default function DashboardsPage() {
   const searchParams = useSearchParams();
   const [search, setSearch] = useState("");
   const [galleryOpen, setGalleryOpen] = useState(false);
+  const [grafanaOpen, setGrafanaOpen] = useState(false);
   const [gallerySlug, setGallerySlug] = useState<string | undefined>(undefined);
   const { dashboards, isLoading, createDashboard, deleteDashboard } =
     useDashboards();
@@ -165,7 +167,9 @@ export default function DashboardsPage() {
           setGalleryOpen(false);
           void handleCreateDashboard();
         }}
+        onImportGrafana={() => setGrafanaOpen(true)}
       />
+      <GrafanaImportSheet open={grafanaOpen} onOpenChange={setGrafanaOpen} />
     </PageWrapper>
   );
 }

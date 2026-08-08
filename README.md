@@ -43,7 +43,7 @@ unlocked by an offline license key; a single team never hits a paywall.
 |---|---|---|
 | Ingest, storage, dashboards, instruments, alerts | ✓ | ✓ |
 | Single-team auth | ✓ | ✓ |
-| Grafana migration tooling | ✓ | ✓ |
+| Grafana dashboard import | ✓ | ✓ |
 | Self-hosting (no caps, no phone-home) | ✓ | ✓ |
 | SSO / SAML / SCIM | | key |
 | RBAC + fine-grained permissions | | key |

@@ -20,6 +20,15 @@ export const FEATURE_MANIFEST = {
         requiredRole: "org:editor",
       },
       {
+        id: "action-import-grafana-dashboard",
+        label: "Import from Grafana",
+        icon: "Import",
+        // Reached from the New Dashboard gallery, not a standalone toolbar
+        // button — same editor threshold as creating a dashboard. Free-tier:
+        // Grafana migration is never license-gated.
+        requiredRole: "org:editor",
+      },
+      {
         id: "action-rename-dashboard",
         label: "Rename",
         icon: "Pencil",

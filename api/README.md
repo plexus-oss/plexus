@@ -31,7 +31,7 @@ with a license key.
 |---|---|---|
 | Ingest, storage, dashboards, instruments, alerts | ✓ | ✓ |
 | Single-team auth | ✓ | ✓ |
-| Grafana migration tooling | ✓ | ✓ |
+| Grafana dashboard import | ✓ | ✓ |
 | Self-hosting (no caps, no phone-home) | ✓ | ✓ |
 | SSO / SAML / SCIM | | key |
 | RBAC + fine-grained permissions | | key |
