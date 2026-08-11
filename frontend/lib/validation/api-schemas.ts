@@ -260,6 +260,13 @@ export const CreateMonitorSchema = z
         // Connection sources: which table the metric column belongs to, so the
         // poll loop doesn't have to guess from the schema snapshot.
         table: z.string().min(1).optional(),
+        // Extra columns fetched with each new row and shown in the alert
+        // (e.g. email, name) — so notifications carry the actual row, not a count.
+        context_columns: z
+          .array(z.string().min(1))
+          .max(5)
+          .nullable()
+          .optional(),
         visualization: z
           .object({
             panel_type: z.string(),

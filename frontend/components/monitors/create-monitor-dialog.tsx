@@ -144,6 +144,9 @@ export function CreateMonitorDialog({
   const [eventSeverity, setEventSeverity] = useState<
     "critical" | "warning" | "info"
   >("info");
+  // Extra columns from the monitored table shown in the alert (max 5) —
+  // "New users row — email=ann@example.com" instead of "Value: 1".
+  const [contextCols, setContextCols] = useState<string[]>([]);
 
   // Threshold config
   const [min, setMin] = useState("");
@@ -268,6 +271,18 @@ export function CreateMonitorDialog({
     metrics.find((m) => m.name === metric && m.table)?.table ??
     null;
 
+  // Candidate context columns: the pinned table's other columns (connection
+  // sources only — device telemetry has a fixed shape with nothing to add).
+  const contextCandidates = useMemo(
+    () =>
+      resolvedTable
+        ? metrics
+            .filter((m) => m.table === resolvedTable && m.name !== metric)
+            .map((m) => m.name)
+        : [],
+    [metrics, resolvedTable, metric],
+  );
+
   const filteredMetrics = useMemo(() => {
     if (!metricSearch) return metrics;
     const q = metricSearch.toLowerCase();
@@ -299,6 +314,7 @@ export function CreateMonitorDialog({
     setTimeoutUnit("minutes");
     setEventSeverity("info");
     setSelectedViz(null);
+    setContextCols([]);
     setMin("");
     setMax("");
     setSeverity("warning");
@@ -344,6 +360,7 @@ export function CreateMonitorDialog({
           enabled: true,
           visualization: vizPreset ? vizPreset.config : null,
           ...(resolvedTable ? { table: resolvedTable } : {}),
+          ...(contextCols.length > 0 ? { context_columns: contextCols } : {}),
         };
       }
 
@@ -477,6 +494,7 @@ export function CreateMonitorDialog({
                     setSourceId(v);
                     setMetric("");
                     setSelectedTable(null);
+                    setContextCols([]);
                     setMetricSearch("");
                     setMetricListOpen(true);
                   }}
@@ -548,6 +566,7 @@ export function CreateMonitorDialog({
                                   onClick={() => {
                                     setMetric(m.name);
                                     setSelectedTable(m.table ?? null);
+                                    setContextCols([]);
                                     setMetricListOpen(false);
                                   }}
                                 >
@@ -779,6 +798,49 @@ export function CreateMonitorDialog({
                         </SelectContent>
                       </Select>
                     </div>
+
+                    {contextCandidates.length > 0 && (
+                      <div className="space-y-1.5">
+                        <label className="text-xs text-muted-foreground">
+                          Include in alert{" "}
+                          <span className="text-muted-foreground/60">
+                            (optional, up to 5)
+                          </span>
+                        </label>
+                        <div className="flex flex-wrap gap-1.5">
+                          {contextCandidates.map((col) => {
+                            const isSelected = contextCols.includes(col);
+                            return (
+                              <button
+                                key={col}
+                                type="button"
+                                onClick={() =>
+                                  setContextCols((prev) =>
+                                    isSelected
+                                      ? prev.filter((c) => c !== col)
+                                      : prev.length < 5
+                                        ? [...prev, col]
+                                        : prev,
+                                  )
+                                }
+                                className={cn(
+                                  "px-2 py-1 rounded-md border text-[11px] font-mono transition-colors",
+                                  isSelected
+                                    ? "border-green-500/50 bg-green-500/10 text-foreground"
+                                    : "border-dashed text-muted-foreground hover:border-border hover:bg-accent/50",
+                                )}
+                              >
+                                {col}
+                              </button>
+                            );
+                          })}
+                        </div>
+                        <p className="text-xs text-muted-foreground">
+                          Columns from {resolvedTable} shown in the
+                          notification — e.g. who or what triggered it
+                        </p>
+                      </div>
+                    )}
 
                     <div className="space-y-1.5">
                       <label className="text-xs text-muted-foreground">

@@ -63,6 +63,46 @@ describe("buildNewRowsSql (no filter — byte-identical baseline)", () => {
   });
 });
 
+describe("buildNewRowsSql (context columns)", () => {
+  it("appends aliased context columns to the projection (postgres)", () => {
+    expect(
+      buildNewRowsSql({
+        dialect: "postgres",
+        ...base,
+        contextColumns: ["email", "name"],
+      }),
+    ).toBe(
+      `SELECT "ts"::text AS plexus_ts, "temp" AS plexus_value, "email" AS plexus_ctx_0, "name" AS plexus_ctx_1 ` +
+        `FROM "readings" ` +
+        `WHERE "ts" > '2026-07-20 10:00:00.123456' ` +
+        `ORDER BY "ts" ASC ` +
+        `LIMIT 1000`,
+    );
+  });
+
+  it("quotes context columns per dialect (clickhouse)", () => {
+    expect(
+      buildNewRowsSql({
+        dialect: "clickhouse",
+        ...base,
+        contextColumns: ["email"],
+      }),
+    ).toBe(
+      "SELECT toString(`ts`) AS plexus_ts, `temp` AS plexus_value, `email` AS plexus_ctx_0 " +
+        "FROM `readings` " +
+        "WHERE `ts` > '2026-07-20 10:00:00.123456' " +
+        "ORDER BY `ts` ASC " +
+        "LIMIT 1000",
+    );
+  });
+
+  it("empty context columns leave SQL byte-identical", () => {
+    expect(
+      buildNewRowsSql({ dialect: "postgres", ...base, contextColumns: [] }),
+    ).toBe(buildNewRowsSql({ dialect: "postgres", ...base }));
+  });
+});
+
 describe("buildNewRowsSql (entity filter)", () => {
   it("appends the predicate to the WHERE clause (postgres)", () => {
     expect(

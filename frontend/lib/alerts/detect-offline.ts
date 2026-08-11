@@ -21,11 +21,24 @@ import "server-only";
 import { and, eq } from "drizzle-orm";
 import { db } from "@/lib/db/client";
 import { alertRules } from "@/lib/db/schema";
-import { adminSourceQueries, adminAlertQueries } from "@/lib/db/server";
+import {
+  adminSourceQueries,
+  adminAlertQueries,
+  adminAlertEventQueries,
+} from "@/lib/db/server";
 import {
   triggerAlertWebhook,
   triggerDeviceStatusWebhook,
 } from "@/lib/webhooks/events";
+
+/** "90s" / "5m" / "1h 30m" — for the alert message. */
+function formatTimeout(seconds: number): string {
+  if (seconds < 120) return `${Math.round(seconds)}s`;
+  if (seconds < 3600) return `${Math.round(seconds / 60)}m`;
+  const h = Math.floor(seconds / 3600);
+  const m = Math.round((seconds % 3600) / 60);
+  return m > 0 ? `${h}h ${m}m` : `${h}h`;
+}
 
 interface OfflineRuleRow {
   id: string;
@@ -84,7 +97,12 @@ export async function detectOfflineOnce(): Promise<OfflineScanResult> {
         source.id,
       );
 
+      const sourceLabel = source.name || source.slug;
+
       if (stale && !open) {
+        const message = `No data from ${sourceLabel} for ${formatTimeout(
+          timeoutMs / 1000,
+        )}`;
         const alert = await adminAlertQueries.create(rule.org_id, {
           source_id: source.id,
           trigger_type: "alert_rule",
@@ -95,22 +113,37 @@ export async function detectOfflineOnce(): Promise<OfflineScanResult> {
           is_alert_active: true,
           rule_id: rule.id,
         });
-        await triggerAlertWebhook(rule.org_id, alert, source, "alert.triggered");
+        await adminAlertEventQueries.create(rule.org_id, alert.id, "created", {
+          message,
+          metadata: { timeout_seconds: timeoutMs / 1000 },
+        });
+        await triggerAlertWebhook(
+          rule.org_id,
+          alert,
+          source,
+          "alert.triggered",
+          { message },
+        );
         await triggerDeviceStatusWebhook(rule.org_id, source, "device.offline");
         fired++;
       } else if (!stale && open) {
         const iso = new Date(now).toISOString();
+        const message = `Data resumed from ${sourceLabel}`;
         const updated = await adminAlertQueries.update(rule.org_id, open.id, {
           status: "resolved",
           is_alert_active: false,
           resolved_at: iso,
           closed_at: iso,
         });
+        await adminAlertEventQueries.create(rule.org_id, open.id, "resolved", {
+          message,
+        });
         await triggerAlertWebhook(
           rule.org_id,
           updated ?? open,
           source,
           "alert.resolved",
+          { message },
         );
         await triggerDeviceStatusWebhook(rule.org_id, source, "device.online");
         resolved++;

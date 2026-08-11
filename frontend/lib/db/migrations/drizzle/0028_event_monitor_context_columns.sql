@@ -1,0 +1,1 @@
+ALTER TABLE "event_monitors" ADD COLUMN "context_columns" text[];

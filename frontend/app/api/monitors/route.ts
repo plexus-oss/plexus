@@ -325,6 +325,7 @@ export const GET = withDualAuth(async (_req, { orgId, userId, isApiKeyAuth }) =>
           panel_config: Record<string, unknown>;
         } | null;
         notification_target_ids: string[] | null;
+        context_columns: string[] | null;
       } | null;
       /** Connection monitor missing table/time-column — the poller skips it. */
       unpinned: boolean;
@@ -399,6 +400,7 @@ export const GET = withDualAuth(async (_req, { orgId, userId, isApiKeyAuth }) =>
         enabled: e.enabled,
         visualization: e.visualization,
         notification_target_ids: e.notification_target_ids,
+        context_columns: e.context_columns,
       };
       existing.unpinned = existing.unpinned || eventUnpinned;
       if (new Date(e.created_at) < new Date(existing.created_at)) {
@@ -418,6 +420,7 @@ export const GET = withDualAuth(async (_req, { orgId, userId, isApiKeyAuth }) =>
           enabled: e.enabled,
           visualization: e.visualization,
           notification_target_ids: e.notification_target_ids,
+          context_columns: e.context_columns,
         },
         unpinned: eventUnpinned,
         created_at: e.created_at,
@@ -620,6 +623,30 @@ export const POST = withDualAuth(async (request, { orgId, userId, orgRole, isApi
     if (rejected) return rejected;
     const pinned = pinPollTarget(event.table, m);
 
+    // Context columns must exist on the pinned table when the snapshot can
+    // prove it — a bad column would make every poll tick error out.
+    const contextColumns = event.context_columns ?? null;
+    if (contextColumns?.length && pinned.table_name) {
+      const snapshot = (src.config as Record<string, unknown> | null)
+        ?.schemaSnapshot as SchemaInfo | undefined;
+      const table = snapshot?.tables?.find(
+        (t) => t.name === pinned.table_name,
+      );
+      const unknown = table
+        ? contextColumns.filter(
+            (c) => !table.columns.some((col) => col.name === c),
+          )
+        : [];
+      if (unknown.length > 0) {
+        return NextResponse.json(
+          {
+            error: `Context column(s) not found on table '${pinned.table_name}': ${unknown.join(", ")}`,
+          },
+          { status: 422 },
+        );
+      }
+    }
+
     if (isApiKeyAuth) {
       await adminEventMonitorQueries.upsert(orgId, {
         source_id: sourceUuid,
@@ -629,6 +656,7 @@ export const POST = withDualAuth(async (request, { orgId, userId, orgRole, isApi
         enabled: event.enabled,
         visualization: event.visualization ?? null,
         notification_target_ids: targetIds,
+        context_columns: contextColumns,
         ...pinned,
       });
     } else {
@@ -640,6 +668,7 @@ export const POST = withDualAuth(async (request, { orgId, userId, orgRole, isApi
         enabled: event.enabled,
         visualization: event.visualization ?? null,
         notification_target_ids: targetIds,
+        context_columns: contextColumns,
         ...pinned,
       });
     }

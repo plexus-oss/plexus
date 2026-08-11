@@ -17,6 +17,7 @@ import { usePlexusSession } from "@/hooks/use-plexus-session";
 import { toast } from "sonner";
 import { AlertTriangle, AlertCircle, Info } from "lucide-react";
 import { useRealtimeEvents, type RowChangeEvent } from "@/lib/realtime/use-realtime-events";
+import { eventAlertSummary } from "@/lib/alerts/event-summary";
 import type { Alert, LimitSeverity } from "@/lib/db/types";
 
 // /shared can be viewed by signed-in users from a different org — pathname
@@ -105,7 +106,7 @@ function showAlertToast(alert: Alert, router: ReturnType<typeof useRouter>) {
 
   let description: string;
   if (alert.trigger_type === "event") {
-    description = `Value: ${alert.value}`;
+    description = eventAlertSummary(alert);
   } else if (alert.threshold != null) {
     const comparison = alert.bound === "max" ? ">" : "<";
     description = `${alert.value} ${comparison} ${alert.threshold}`;

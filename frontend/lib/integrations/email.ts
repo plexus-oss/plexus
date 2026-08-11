@@ -220,7 +220,10 @@ export function buildAlertEmailHtml(
 
   const metric = data.metric ? String(data.metric) : undefined;
   const deviceName = (data.sourceName as string) || (data.sourceSlug as string);
+  // Event alerts: the composed message ("New signup — ann@example.com") says
+  // far more than the monitored column name, so it leads.
   const title =
+    (data.triggerType === "event" ? (data.message as string) : undefined) ||
     metric ||
     (data.message as string) ||
     (data.summary as string) ||
@@ -267,7 +270,7 @@ export function buildAlertEmailHtml(
         <table width="100%" style="border-collapse:collapse;">
           <tr>
             <td style="vertical-align:baseline;">
-              ${sectionLabel("Value")}
+              ${sectionLabel(data.triggerType === "event" ? "New Rows" : "Value")}
               <div style="font-family:${MONO};font-size:28px;font-weight:500;color:${INK};line-height:1;">${escapeHtml(formatValue(data.value))}</div>
             </td>
             <td align="right" style="vertical-align:baseline;">
@@ -369,13 +372,15 @@ export function buildAlertEmailHtml(
 
   const delta = deltaView(data);
   const preheader =
-    metric && data.value !== undefined
-      ? `${metric} ${formatValue(data.value)}${
-          delta && delta.arrow
-            ? ` — ${delta.arrow} ${Math.abs(delta.deltaPct).toFixed(1)}% ${delta.relation} ${data.threshold}`
-            : ""
-        }`
-      : (data.message as string) || label;
+    data.triggerType === "event" && data.message
+      ? String(data.message)
+      : metric && data.value !== undefined
+        ? `${metric} ${formatValue(data.value)}${
+            delta && delta.arrow
+              ? ` — ${delta.arrow} ${Math.abs(delta.deltaPct).toFixed(1)}% ${delta.relation} ${data.threshold}`
+              : ""
+          }`
+        : (data.message as string) || label;
 
   return {
     html: renderEmail({ bodyHtml, preheader: escapeHtml(preheader) }),
@@ -397,6 +402,9 @@ export function buildAlertEmailText(
 
   const metric = data.metric ? String(data.metric) : undefined;
   lines.push(metric ? `${label} — ${metric}` : label);
+  if (data.triggerType === "event" && data.message) {
+    lines.push(String(data.message));
+  }
 
   const metaTime =
     (eventType === "alert.resolved" && data.resolvedAt) ||

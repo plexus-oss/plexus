@@ -65,6 +65,29 @@ function getEventLabel(eventType: WebhookEventType): string {
 }
 
 /**
+ * Scalar context-snapshot entries (same filter as the email renderer):
+ * underscore-prefixed and object-valued keys are internal detail.
+ */
+const MAX_CONTEXT_FIELDS = 5;
+
+function contextFields(
+  data: Record<string, unknown>,
+): Array<{ type: string; text: string }> {
+  const ctx = data.contextSnapshot;
+  if (!ctx || typeof ctx !== "object" || Array.isArray(ctx)) return [];
+  return Object.entries(ctx as Record<string, unknown>)
+    .filter(
+      ([k, v]) =>
+        !k.startsWith("_") && k !== "attachments" && typeof v !== "object",
+    )
+    .slice(0, MAX_CONTEXT_FIELDS)
+    .map(([k, v]) => ({
+      type: "mrkdwn",
+      text: `*${k.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase())}:*\n${String(v)}`,
+    }));
+}
+
+/**
  * Build Slack Block Kit message blocks for alert/device/threshold events
  */
 export function buildAlertBlocks(
@@ -118,6 +141,15 @@ export function buildAlertBlocks(
     blocks.push({
       type: "section",
       fields,
+    });
+  }
+
+  // Row context from the snapshot (e.g. Email / Name for event alerts).
+  const ctxFields = contextFields(data);
+  if (ctxFields.length > 0) {
+    blocks.push({
+      type: "section",
+      fields: ctxFields,
     });
   }
 

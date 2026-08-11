@@ -40,13 +40,19 @@ export async function resolveNotificationTargets(
 }
 
 /**
- * Trigger webhooks for alert events
+ * Trigger webhooks for alert events.
+ *
+ * `opts.message` is the message the firing path already composed (the
+ * monitor's custom text or a context-rich default, as written to
+ * alert_events). Always pass it when one exists — the fallback templates
+ * below can only re-derive a bare "metric = value" line from the alert row.
  */
 export async function triggerAlertWebhook(
   orgId: string,
   alert: Alert,
   source: Source | null,
   eventType: "alert.triggered" | "alert.resolved" | "alert.acknowledged",
+  opts?: { message?: string | null },
 ): Promise<void> {
   const data = {
     alertId: alert.id,
@@ -64,9 +70,10 @@ export async function triggerAlertWebhook(
     contextSnapshot: alert.context_snapshot ?? undefined,
     recommendedActions: alert.recommended_actions ?? undefined,
     message:
-      alert.trigger_type === "event"
+      opts?.message ||
+      (alert.trigger_type === "event"
         ? `New event: ${alert.metric} = ${alert.value}`
-        : `${alert.metric} ${alert.bound === "max" ? "exceeded" : "below"} threshold`,
+        : `${alert.metric} ${alert.bound === "max" ? "exceeded" : "below"} threshold`),
     triggeredAt: alert.triggered_at,
     acknowledgedAt: alert.acknowledged_at || undefined,
     resolvedAt: alert.resolved_at || undefined,

@@ -9,11 +9,9 @@
  *  2. Threshold (source_limits) monitors on CONNECTION sources — same read,
  *     each new row's value evaluated against min/max.
  *  3. Event monitors on DEVICE sources — polled from the owned ClickHouse
- *     store (telemetry lands there via gateway → Redis → loader, but the
- *     detection consumer that was meant to push it to /api/internal/detect was
- *     never built). Device THRESHOLDS are deliberately NOT polled: the Go
- *     alert-service owns them on the live stream, and a second evaluator
- *     would double-alert.
+ *     store (telemetry lands there via gateway → Redis → loader). Device
+ *     THRESHOLDS are deliberately NOT polled: the Go alert-service owns them
+ *     on the live stream, and a second evaluator would double-alert.
  *  4. Event + threshold monitors on DISCOVERED device sources — auto-discovery
  *     mints device sources whose data is a slice of a parent CONNECTION's
  *     table (source_associations: filter_column = filter_value). These have no
@@ -448,6 +446,9 @@ async function pollConnectionSource(
           valueColumn: monitor.metric,
           watermark: monitor.poll_watermark,
           limit: POLL_ROW_LIMIT,
+          ...(unit.kind === "event" && unit.row.context_columns?.length
+            ? { contextColumns: unit.row.context_columns }
+            : {}),
         }),
       );
       recordSuccess(source.id);
@@ -500,6 +501,11 @@ interface PolledTarget {
 
 type PolledRow = Record<string, unknown>;
 
+/**
+ * Scalar poll facts, spread at the TOP LEVEL of context_snapshot: the alert
+ * panel, email, and Slack renderers all show scalar snapshot entries and skip
+ * nested objects, so nesting these (the old `_poll` shape) hid them entirely.
+ */
 function pollContext(
   target: PolledTarget,
   rows: PolledRow[],
@@ -507,17 +513,31 @@ function pollContext(
   const last = rows[rows.length - 1];
   return {
     table: target.table,
-    time_column: target.timeColumn,
     ...(target.filterColumn != null && target.filterValue != null
       ? { filter_column: target.filterColumn, filter_value: target.filterValue }
       : {}),
     row_count: rows.length,
-    truncated: rows.length === POLL_ROW_LIMIT,
+    ...(rows.length === POLL_ROW_LIMIT ? { truncated: true } : {}),
     first_ts: String(rows[0].plexus_ts),
     last_ts: String(last.plexus_ts),
     latest_value: String(last.plexus_value),
   };
 }
+
+/** The last row's context-column values, keyed by column name. */
+function contextValues(
+  contextColumns: string[] | null,
+  row: PolledRow,
+): Record<string, string> {
+  const values: Record<string, string> = {};
+  for (const [i, col] of (contextColumns ?? []).entries()) {
+    const v = row[`plexus_ctx_${i}`];
+    if (v !== undefined && v !== null) values[col] = String(v);
+  }
+  return values;
+}
+
+const MAX_SAMPLE_ROWS = 3;
 
 async function fireEventBatch(
   monitor: EventMonitorRecord,
@@ -527,6 +547,32 @@ async function fireEventBatch(
   nowIso: string,
 ): Promise<boolean> {
   const last = rows[rows.length - 1];
+  const lastValues = contextValues(monitor.context_columns, last);
+  const ctxPairs = Object.entries(lastValues);
+
+  // "New users row — email=ann@example.com, name=Ann (+2 more)" when context
+  // columns are configured; the monitored column's value otherwise.
+  const detail =
+    ctxPairs.length > 0
+      ? ctxPairs.map(([k, v]) => `${k}=${v}`).join(", ")
+      : `${monitor.metric} = ${String(last.plexus_value)}`;
+  const more = rows.length > 1 ? ` (+${rows.length - 1} more)` : "";
+  const defaultMessage =
+    ctxPairs.length > 0
+      ? `New ${target.table} row — ${detail}${more}`
+      : `New event: ${detail}${more}`;
+
+  // Newest-first sample rows, kept under an underscore key: renderers skip
+  // object values, so these are for the API/detail views, not the flat rows.
+  const samples =
+    monitor.context_columns?.length && rows.length > 0
+      ? rows.slice(-MAX_SAMPLE_ROWS).reverse().map((row) => ({
+          ts: String(row.plexus_ts),
+          value: String(row.plexus_value),
+          ...contextValues(monitor.context_columns, row),
+        }))
+      : null;
+
   const alert = await fireEventAlert({
     orgId: monitor.org_id,
     sourceId: source.id,
@@ -536,11 +582,11 @@ async function fireEventBatch(
     value: rows.length,
     severity: monitor.severity,
     triggeredAt: nowIso,
-    message:
-      monitor.message ||
-      `New event: ${monitor.metric} = ${String(last.plexus_value)}`,
+    message: monitor.message || defaultMessage,
     contextSnapshot: {
-      _poll: pollContext(target, rows),
+      ...pollContext(target, rows),
+      ...lastValues,
+      ...(samples ? { _samples: samples } : {}),
       ...(monitor.visualization
         ? {
             _visualization: JSON.parse(JSON.stringify(monitor.visualization)),
@@ -602,9 +648,7 @@ async function fireLimitBatch(
     limitId: limit.id,
     triggeredAt: nowIso,
     message: limit.message,
-    contextSnapshot: {
-      _poll: { ...pollContext(target, rows), violations },
-    },
+    contextSnapshot: { ...pollContext(target, rows), violations },
     eventMetadata: {
       value: first.value,
       limit: { min: limit.min, max: limit.max, severity: limit.severity },

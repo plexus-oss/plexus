@@ -197,6 +197,13 @@
       "when": 1786219026178,
       "tag": "0027_alerts_active_index",
       "breakpoints": true
+    },
+    {
+      "idx": 28,
+      "version": "7",
+      "when": 1786466557551,
+      "tag": "0028_event_monitor_context_columns",
+      "breakpoints": true
     }
   ]
 }

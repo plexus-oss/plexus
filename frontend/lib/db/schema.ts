@@ -214,6 +214,9 @@ export const eventMonitors = pgTable(
       withTimezone: true,
       mode: "string",
     }),
+    // Extra columns from the monitored table fetched with each new row and
+    // attached to the alert's context snapshot (e.g. email, name).
+    context_columns: text("context_columns").array(),
   },
   (table) => [
     index("idx_event_monitors_enabled")

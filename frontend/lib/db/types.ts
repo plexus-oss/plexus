@@ -2168,6 +2168,7 @@ export interface EventMonitorRecord {
   time_column: string | null;
   poll_watermark: string | null;
   last_polled_at: string | null;
+  context_columns: string[] | null;
   created_at: string;
   updated_at: string;
 }

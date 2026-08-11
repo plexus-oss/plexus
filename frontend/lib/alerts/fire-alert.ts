@@ -1,13 +1,10 @@
 /**
  * Shared alert-firing path for event detection.
  *
- * Used by both evaluators: the push path (/api/internal/detect, fed telemetry
- * batches) and the poll path (lib/alerts/detect-poll, scanning
- * connection sources). The dedup cache is in-process best-effort — bundler
- * module duplication can give each entrypoint its own instance — but the two
- * evaluators cover disjoint source types (push = device telemetry, poll =
- * connection sources), each is self-consistent, and the poll path's persisted
- * watermark is the durable duplicate guard.
+ * Used by the poll path (lib/alerts/detect-poll, scanning connection sources
+ * and the owned ClickHouse store). The dedup cache is in-process best-effort —
+ * bundler module duplication can give each entrypoint its own instance — but
+ * the poll path's persisted watermark is the durable duplicate guard.
  */
 
 import "server-only";
@@ -102,7 +99,9 @@ export async function fireEventAlert(
   });
 
   try {
-    await triggerAlertWebhook(orgId, alert, params.source, "alert.triggered");
+    await triggerAlertWebhook(orgId, alert, params.source, "alert.triggered", {
+      message: params.message,
+    });
   } catch (err) {
     console.error("[fire-alert] Failed to dispatch event alert webhook:", err);
   }
@@ -128,7 +127,7 @@ export interface FireLimitAlertParams {
   severity: "info" | "warning" | "critical";
   limitId: string;
   triggeredAt: string;
-  /** Custom message; falls back to the push path's format. */
+  /** Custom message; falls back to a generic "Limit violation" line. */
   message?: string | null;
   contextSnapshot?: Record<string, unknown>;
   eventMetadata?: Record<string, unknown>;
@@ -161,15 +160,19 @@ export async function fireLimitAlert(
 
   markAlertCreated(orgId, sourceId, metric, alert.id);
 
+  const message =
+    params.message ||
+    `Limit violation: ${metric} ${params.bound === "min" ? "below minimum" : "above maximum"} (${params.value} vs ${params.threshold})`;
+
   await alertEventQueries.create(orgId, alert.id, "created", {
-    message:
-      params.message ||
-      `Limit violation: ${metric} ${params.bound === "min" ? "below minimum" : "above maximum"} (${params.value} vs ${params.threshold})`,
+    message,
     metadata: params.eventMetadata ?? {},
   });
 
   try {
-    await triggerAlertWebhook(orgId, alert, params.source, "alert.triggered");
+    await triggerAlertWebhook(orgId, alert, params.source, "alert.triggered", {
+      message,
+    });
   } catch (err) {
     console.error("[fire-alert] Failed to dispatch limit alert webhook:", err);
   }

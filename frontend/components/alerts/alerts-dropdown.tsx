@@ -33,6 +33,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { formatDateInZone } from "@/lib/timezone";
+import { eventAlertSummary } from "@/lib/alerts/event-summary";
 import type { Alert } from "@/lib/db/types";
 
 const ALERTS_LAST_SEEN_URL = "/api/notifications/alerts-last-seen";
@@ -91,7 +92,9 @@ function AlertItem({
 }) {
   const description = alert.threshold
     ? `Value ${alert.value} ${alert.bound === "max" ? "exceeded" : "below"} threshold ${alert.threshold}`
-    : `Value: ${alert.value}`;
+    : alert.trigger_type === "event"
+      ? eventAlertSummary(alert)
+      : `Value: ${alert.value}`;
 
   const handleDismiss = (e: React.MouseEvent) => {
     e.preventDefault();

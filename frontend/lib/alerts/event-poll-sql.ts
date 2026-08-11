@@ -86,7 +86,8 @@ function entityFilter(
 
 /**
  * Rows newer than the watermark, oldest first, capped. Selects only the time
- * column (as DB-rendered text) and the monitored column — never `SELECT *`.
+ * column (as DB-rendered text), the monitored column, and any declared context
+ * columns (aliased positionally as plexus_ctx_N) — never `SELECT *`.
  */
 export function buildNewRowsSql(params: {
   dialect: PollDialect;
@@ -98,13 +99,17 @@ export function buildNewRowsSql(params: {
   limit?: number;
   filterColumn?: string;
   filterValue?: string;
+  contextColumns?: string[];
 }): string {
   const { dialect, timeColumn, valueColumn, watermark } = params;
   const limit = params.limit ?? POLL_ROW_LIMIT;
   const timeCol = quoteIdent(dialect, timeColumn);
   const valueCol = quoteIdent(dialect, valueColumn);
+  const ctxCols = (params.contextColumns ?? [])
+    .map((col, i) => `, ${quoteIdent(dialect, col)} AS plexus_ctx_${i}`)
+    .join("");
   return (
-    `SELECT ${timeAsText(dialect, timeColumn)} AS plexus_ts, ${valueCol} AS plexus_value ` +
+    `SELECT ${timeAsText(dialect, timeColumn)} AS plexus_ts, ${valueCol} AS plexus_value${ctxCols} ` +
     `FROM ${tableRef(params)} ` +
     `WHERE ${timeCol} > '${escapeLiteral(watermark)}' ` +
     entityFilter(dialect, params.filterColumn, params.filterValue) +
