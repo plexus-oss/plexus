@@ -1912,57 +1912,6 @@ export const adminAlertQueries = {
     return tallyVerdicts(rows);
   },
 
-  /** Open-alert count per source (admin/no-RLS). Mirrors
-   * alertQueries.getOpenCountsBySource for the API-key fleet-overview path. */
-  getOpenCountsBySource: async (
-    orgId: string,
-  ): Promise<Array<{ source_id: string; count: number }>> => {
-    const rows = await db
-      .select({
-        source_id: alerts.source_id,
-        count: sql<number>`count(*)`.mapWith(Number),
-      })
-      .from(alerts)
-      .where(and(eq(alerts.org_id, orgId), eq(alerts.status, "open")))
-      .groupBy(alerts.source_id);
-    return rows
-      .filter((r): r is { source_id: string; count: number } => !!r.source_id)
-      .map((r) => ({ source_id: r.source_id, count: r.count }));
-  },
-
-  /** Verdict tally per source over the recency window (admin/no-RLS). Mirrors
-   * alertQueries.getNoiseBySource. */
-  getNoiseBySource: async (
-    orgId: string,
-  ): Promise<Array<{ source_id: string; noise: number; total: number }>> => {
-    const since = new Date(
-      Date.now() - VERDICT_WINDOW_DAYS * 86_400_000,
-    ).toISOString();
-    const rows = await db
-      .select({
-        source_id: alerts.source_id,
-        noise: sql<number>`count(*) filter (where ${alerts.current_verdict} = 'noise')`.mapWith(
-          Number,
-        ),
-        total: sql<number>`count(*)`.mapWith(Number),
-      })
-      .from(alerts)
-      .where(
-        and(
-          eq(alerts.org_id, orgId),
-          isNotNull(alerts.current_verdict),
-          gte(alerts.triggered_at, since),
-        ),
-      )
-      .groupBy(alerts.source_id);
-    return rows
-      .filter(
-        (r): r is { source_id: string; noise: number; total: number } =>
-          !!r.source_id,
-      )
-      .map((r) => ({ source_id: r.source_id, noise: r.noise, total: r.total }));
-  },
-
   /**
    * Find the open alert for a given (rule, source) pair.
    * Used by the transitions endpoint for close-matching.
