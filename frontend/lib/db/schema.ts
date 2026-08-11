@@ -217,6 +217,12 @@ export const eventMonitors = pgTable(
     // Extra columns from the monitored table fetched with each new row and
     // attached to the alert's context snapshot (e.g. email, name).
     context_columns: text("context_columns").array(),
+    // Row predicate: [{column, op, value}] ANDed into the poll WHERE clause,
+    // so "new signup" can mean `event_type = 'signup'`, not "any new row".
+    filters: jsonb(),
+    // "digest" (default): one alert per poll batch. "per_row": one alert per
+    // matching row (capped), so 3 signups = 3 alerts, not one alert saying 3.
+    delivery: text("delivery"),
   },
   (table) => [
     index("idx_event_monitors_enabled")

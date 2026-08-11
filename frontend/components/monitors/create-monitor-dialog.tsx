@@ -147,6 +147,15 @@ export function CreateMonitorDialog({
   // Extra columns from the monitored table shown in the alert (max 5) —
   // "New users row — email=ann@example.com" instead of "Value: 1".
   const [contextCols, setContextCols] = useState<string[]>([]);
+  // Explicit poll cursor ("" = auto-detect). Pins which column marks a row as
+  // new — the fix for "new signup" firing on logins (last_login_at).
+  const [cursorCol, setCursorCol] = useState<string>("");
+  // Row predicate: "new signup" = event_type eq signup.
+  const [filters, setFilters] = useState<
+    { column: string; op: string; value: string }[]
+  >([]);
+  // One alert per matching row vs one digest per poll batch.
+  const [perRow, setPerRow] = useState(false);
 
   // Threshold config
   const [min, setMin] = useState("");
@@ -271,16 +280,20 @@ export function CreateMonitorDialog({
     metrics.find((m) => m.name === metric && m.table)?.table ??
     null;
 
-  // Candidate context columns: the pinned table's other columns (connection
-  // sources only — device telemetry has a fixed shape with nothing to add).
-  const contextCandidates = useMemo(
+  // All columns on the pinned table (connection sources only — device
+  // telemetry has a fixed shape). Powers the cursor picker and filter builder.
+  const tableColumns = useMemo(
     () =>
       resolvedTable
-        ? metrics
-            .filter((m) => m.table === resolvedTable && m.name !== metric)
-            .map((m) => m.name)
+        ? metrics.filter((m) => m.table === resolvedTable).map((m) => m.name)
         : [],
-    [metrics, resolvedTable, metric],
+    [metrics, resolvedTable],
+  );
+
+  // Candidate context columns exclude the monitored metric itself.
+  const contextCandidates = useMemo(
+    () => tableColumns.filter((c) => c !== metric),
+    [tableColumns, metric],
   );
 
   const filteredMetrics = useMemo(() => {
@@ -315,6 +328,9 @@ export function CreateMonitorDialog({
     setEventSeverity("info");
     setSelectedViz(null);
     setContextCols([]);
+    setCursorCol("");
+    setFilters([]);
+    setPerRow(false);
     setMin("");
     setMax("");
     setSeverity("warning");
@@ -354,13 +370,19 @@ export function CreateMonitorDialog({
 
       if (eventEnabled) {
         const vizPreset = vizPresets.find((v) => v.key === selectedViz);
+        const cleanFilters = filters.filter(
+          (f) => f.column && f.value !== "",
+        );
         body.event = {
           severity: eventSeverity,
           message: message || null,
           enabled: true,
           visualization: vizPreset ? vizPreset.config : null,
           ...(resolvedTable ? { table: resolvedTable } : {}),
+          ...(cursorCol ? { time_column: cursorCol } : {}),
           ...(contextCols.length > 0 ? { context_columns: contextCols } : {}),
+          ...(cleanFilters.length > 0 ? { filters: cleanFilters } : {}),
+          ...(perRow ? { delivery: "per_row" } : {}),
         };
       }
 
@@ -495,6 +517,8 @@ export function CreateMonitorDialog({
                     setMetric("");
                     setSelectedTable(null);
                     setContextCols([]);
+                    setCursorCol("");
+                    setFilters([]);
                     setMetricSearch("");
                     setMetricListOpen(true);
                   }}
@@ -567,6 +591,8 @@ export function CreateMonitorDialog({
                                     setMetric(m.name);
                                     setSelectedTable(m.table ?? null);
                                     setContextCols([]);
+                                    setCursorCol("");
+                                    setFilters([]);
                                     setMetricListOpen(false);
                                   }}
                                 >
@@ -758,9 +784,183 @@ export function CreateMonitorDialog({
                 {eventEnabled && (
                   <div className="space-y-4">
                     <p className="text-xs text-muted-foreground">
-                      An alert will be created every time a new data point
-                      arrives for this metric.
+                      An alert fires when a new row appears for this metric.
                     </p>
+
+                    {/* Cursor column — connection sources only */}
+                    {tableColumns.length > 0 && (
+                      <div className="space-y-1.5">
+                        <label className="text-xs text-muted-foreground">
+                          Watch for new rows by
+                        </label>
+                        <Select
+                          value={cursorCol || "__auto__"}
+                          onValueChange={(v) =>
+                            setCursorCol(v === "__auto__" ? "" : v)
+                          }
+                        >
+                          <SelectTrigger className="h-9 text-xs w-full">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="__auto__" className="text-xs">
+                              Auto-detect (prefers created_at)
+                            </SelectItem>
+                            {tableColumns.map((c) => (
+                              <SelectItem key={c} value={c} className="text-xs">
+                                <code className="font-mono">{c}</code>
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                        <p className="text-xs text-muted-foreground">
+                          Pick a created-at timestamp or a row id. Avoid
+                          updated_at — every edit re-fires the row.
+                        </p>
+                      </div>
+                    )}
+
+                    {/* Row filter — connection sources only */}
+                    {tableColumns.length > 0 && (
+                      <div className="space-y-1.5">
+                        <label className="text-xs text-muted-foreground">
+                          Only when{" "}
+                          <span className="text-muted-foreground/60">
+                            (optional)
+                          </span>
+                        </label>
+                        <div className="space-y-1.5">
+                          {filters.map((f, i) => (
+                            <div key={i} className="flex items-center gap-1.5">
+                              <Select
+                                value={f.column}
+                                onValueChange={(v) =>
+                                  setFilters((prev) =>
+                                    prev.map((x, j) =>
+                                      j === i ? { ...x, column: v } : x,
+                                    ),
+                                  )
+                                }
+                              >
+                                <SelectTrigger className="h-8 text-xs flex-1">
+                                  <SelectValue placeholder="Column" />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  {tableColumns.map((c) => (
+                                    <SelectItem
+                                      key={c}
+                                      value={c}
+                                      className="text-xs"
+                                    >
+                                      {c}
+                                    </SelectItem>
+                                  ))}
+                                </SelectContent>
+                              </Select>
+                              <Select
+                                value={f.op}
+                                onValueChange={(v) =>
+                                  setFilters((prev) =>
+                                    prev.map((x, j) =>
+                                      j === i ? { ...x, op: v } : x,
+                                    ),
+                                  )
+                                }
+                              >
+                                <SelectTrigger className="h-8 text-xs w-[70px]">
+                                  <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  {[
+                                    ["eq", "="],
+                                    ["neq", "≠"],
+                                    ["gt", ">"],
+                                    ["gte", "≥"],
+                                    ["lt", "<"],
+                                    ["lte", "≤"],
+                                  ].map(([op, sym]) => (
+                                    <SelectItem
+                                      key={op}
+                                      value={op}
+                                      className="text-xs"
+                                    >
+                                      {sym}
+                                    </SelectItem>
+                                  ))}
+                                </SelectContent>
+                              </Select>
+                              <Input
+                                className="h-8 text-xs flex-1"
+                                placeholder="value"
+                                value={f.value}
+                                onChange={(e) =>
+                                  setFilters((prev) =>
+                                    prev.map((x, j) =>
+                                      j === i
+                                        ? { ...x, value: e.target.value }
+                                        : x,
+                                    ),
+                                  )
+                                }
+                              />
+                              <button
+                                type="button"
+                                className="text-muted-foreground hover:text-foreground px-1 text-xs"
+                                onClick={() =>
+                                  setFilters((prev) =>
+                                    prev.filter((_, j) => j !== i),
+                                  )
+                                }
+                                aria-label="Remove filter"
+                              >
+                                ✕
+                              </button>
+                            </div>
+                          ))}
+                          {filters.length < 3 && (
+                            <button
+                              type="button"
+                              className="text-xs text-muted-foreground hover:text-foreground"
+                              onClick={() =>
+                                setFilters((prev) => [
+                                  ...prev,
+                                  {
+                                    column: tableColumns[0] ?? "",
+                                    op: "eq",
+                                    value: "",
+                                  },
+                                ])
+                              }
+                            >
+                              + Add condition
+                            </button>
+                          )}
+                        </div>
+                        <p className="text-xs text-muted-foreground">
+                          e.g. <code className="font-mono">event_type = signup</code> —
+                          only matching rows fire.
+                        </p>
+                      </div>
+                    )}
+
+                    {/* Delivery */}
+                    <label className="flex items-start gap-2 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        className="mt-0.5"
+                        checked={perRow}
+                        onChange={(e) => setPerRow(e.target.checked)}
+                      />
+                      <span className="space-y-0.5">
+                        <span className="text-xs block">
+                          One alert per row
+                        </span>
+                        <span className="text-xs text-muted-foreground block">
+                          Off: one alert per scan. On: a separate alert for each
+                          matching row (capped per scan).
+                        </span>
+                      </span>
+                    </label>
 
                     <div className="space-y-1.5">
                       <label className="text-xs text-muted-foreground">

@@ -9,13 +9,22 @@
  * poller backfills the result (the `persist` field) so resolution happens once.
  */
 
-import { detectTimeColumn } from "@/lib/dashboard/column-roles";
+import {
+  detectTimeColumn,
+  isIntegerType,
+} from "@/lib/dashboard/column-roles";
 import type { SchemaInfo } from "@/lib/db/drivers/types";
 
 export interface PollTarget {
   table: string;
   schema?: string;
   timeColumn: string;
+  /**
+   * "numeric" when the cursor column is integer-typed (a monotonic id — an
+   * UPDATE can never re-emit a row through it); "time" otherwise. Determined
+   * from the snapshot when available; affects the init-watermark fallback.
+   */
+  cursorKind: "time" | "numeric";
   /** Entity predicate for discovered sources (from source_associations). */
   filterColumn?: string;
   filterValue?: string;
@@ -86,7 +95,12 @@ export function resolvePollTarget(
       persist = { table_name: table, time_column: timeColumn };
     }
 
-    const target: PollTarget = { table, schema, timeColumn };
+    const target: PollTarget = {
+      table,
+      schema,
+      timeColumn,
+      cursorKind: cursorKind(snapTable, timeColumn),
+    };
     if (association.filter_column != null && association.filter_value != null) {
       target.filterColumn = association.filter_column;
       target.filterValue = association.filter_value;
@@ -105,6 +119,7 @@ export function resolvePollTarget(
         table: monitor.table_name,
         schema: table?.schema,
         timeColumn: monitor.time_column,
+        cursorKind: cursorKind(table, monitor.time_column),
       },
     };
   }
@@ -151,9 +166,24 @@ export function resolvePollTarget(
 
   return {
     ok: true,
-    target: { table: table.name, schema: table.schema, timeColumn },
+    target: {
+      table: table.name,
+      schema: table.schema,
+      timeColumn,
+      cursorKind: cursorKind(table, timeColumn),
+    },
     persist: { table_name: table.name, time_column: timeColumn },
   };
+}
+
+/** "numeric" only when the snapshot proves the cursor column is integer-typed;
+ * unknown types default to "time" (the historical behavior). */
+function cursorKind(
+  table: SnapshotTable | undefined,
+  timeColumn: string,
+): "time" | "numeric" {
+  const type = table?.columns.find((c) => c.name === timeColumn)?.type;
+  return type && isIntegerType(type) ? "numeric" : "time";
 }
 
 function findTable(

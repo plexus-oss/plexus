@@ -39,6 +39,7 @@ describe("resolvePollTarget with an association (discovered entity)", () => {
         table: "readings",
         schema: "public",
         timeColumn: "created_at",
+        cursorKind: "time",
         filterColumn: "device_id",
         filterValue: "dev-1",
       },
@@ -58,6 +59,7 @@ describe("resolvePollTarget with an association (discovered entity)", () => {
         table: "readings",
         schema: "public",
         timeColumn: "created_at",
+        cursorKind: "time",
         filterColumn: "device_id",
         filterValue: "dev-1",
       },
@@ -95,7 +97,12 @@ describe("resolvePollTarget without an association (existing behavior)", () => {
     );
     expect(res).toEqual({
       ok: true,
-      target: { table: "readings", schema: "public", timeColumn: "created_at" },
+      target: {
+        table: "readings",
+        schema: "public",
+        timeColumn: "created_at",
+        cursorKind: "time",
+      },
       persist: { table_name: "readings", time_column: "created_at" },
     });
   });
@@ -107,7 +114,33 @@ describe("resolvePollTarget without an association (existing behavior)", () => {
     );
     expect(res).toEqual({
       ok: true,
-      target: { table: "readings", schema: undefined, timeColumn: "created_at" },
+      target: {
+        table: "readings",
+        schema: undefined,
+        timeColumn: "created_at",
+        cursorKind: "time",
+      },
     });
+  });
+
+  it("detects a numeric id cursor from the snapshot type", () => {
+    const idSnapshot = {
+      tables: [
+        {
+          name: "events",
+          schema: "public",
+          columns: [
+            { name: "id", type: "bigint" },
+            { name: "kind", type: "text" },
+          ],
+        },
+      ],
+    } as unknown as SchemaInfo;
+    const res = resolvePollTarget(
+      { metric: "kind", table_name: "events", time_column: "id" },
+      idSnapshot,
+    );
+    expect(res.ok).toBe(true);
+    if (res.ok) expect(res.target.cursorKind).toBe("numeric");
   });
 });

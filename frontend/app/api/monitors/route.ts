@@ -326,6 +326,9 @@ export const GET = withDualAuth(async (_req, { orgId, userId, isApiKeyAuth }) =>
         } | null;
         notification_target_ids: string[] | null;
         context_columns: string[] | null;
+        filters: unknown;
+        delivery: string | null;
+        time_column: string | null;
       } | null;
       /** Connection monitor missing table/time-column — the poller skips it. */
       unpinned: boolean;
@@ -401,6 +404,9 @@ export const GET = withDualAuth(async (_req, { orgId, userId, isApiKeyAuth }) =>
         visualization: e.visualization,
         notification_target_ids: e.notification_target_ids,
         context_columns: e.context_columns,
+        filters: e.filters,
+        delivery: e.delivery,
+        time_column: e.time_column,
       };
       existing.unpinned = existing.unpinned || eventUnpinned;
       if (new Date(e.created_at) < new Date(existing.created_at)) {
@@ -421,6 +427,9 @@ export const GET = withDualAuth(async (_req, { orgId, userId, isApiKeyAuth }) =>
           visualization: e.visualization,
           notification_target_ids: e.notification_target_ids,
           context_columns: e.context_columns,
+          filters: e.filters,
+          delivery: e.delivery,
+          time_column: e.time_column,
         },
         unpinned: eventUnpinned,
         created_at: e.created_at,
@@ -535,6 +544,7 @@ export const POST = withDualAuth(async (request, { orgId, userId, orgRole, isApi
   const pinPollTarget = (
     requestedTable: string | null | undefined,
     m: string,
+    requestedTimeColumn?: string | null,
   ): { table_name: string | null; time_column: string | null } => {
     if (src.source_type !== "connection") {
       return { table_name: null, time_column: null };
@@ -545,10 +555,11 @@ export const POST = withDualAuth(async (request, { orgId, userId, orgRole, isApi
     const table = tableName
       ? snapshot?.tables?.find((t) => t.name === tableName)
       : uniqueTableWithColumn(snapshot, m);
-    let timeColumn: string | null = null;
+    // An explicit cursor ("watch for new rows by") always wins over the guess.
+    let timeColumn: string | null = requestedTimeColumn ?? null;
     if (table) {
       tableName ??= table.name;
-      timeColumn = detectTimeColumn(table.columns) ?? null;
+      timeColumn ??= detectTimeColumn(table.columns) ?? null;
     }
     return { table_name: tableName, time_column: timeColumn };
   };
@@ -621,56 +632,56 @@ export const POST = withDualAuth(async (request, { orgId, userId, orgRole, isApi
     const m = metric as string; // guaranteed by schema refine
     const rejected = unpinnableError(event.table, m);
     if (rejected) return rejected;
-    const pinned = pinPollTarget(event.table, m);
-
-    // Context columns must exist on the pinned table when the snapshot can
-    // prove it — a bad column would make every poll tick error out.
+    const pinned = pinPollTarget(event.table, m, event.time_column ?? null);
     const contextColumns = event.context_columns ?? null;
-    if (contextColumns?.length && pinned.table_name) {
+    const filters = event.filters ?? null;
+
+    // Every referenced column (cursor, context, filters) must exist on the
+    // pinned table when the snapshot can prove it — a bad column would make
+    // every poll tick error out.
+    if (pinned.table_name) {
       const snapshot = (src.config as Record<string, unknown> | null)
         ?.schemaSnapshot as SchemaInfo | undefined;
       const table = snapshot?.tables?.find(
         (t) => t.name === pinned.table_name,
       );
+      const referenced = [
+        ...(event.time_column ? [event.time_column] : []),
+        ...(contextColumns ?? []),
+        ...(filters ?? []).map((f) => f.column),
+      ];
       const unknown = table
-        ? contextColumns.filter(
+        ? referenced.filter(
             (c) => !table.columns.some((col) => col.name === c),
           )
         : [];
       if (unknown.length > 0) {
         return NextResponse.json(
           {
-            error: `Context column(s) not found on table '${pinned.table_name}': ${unknown.join(", ")}`,
+            error: `Column(s) not found on table '${pinned.table_name}': ${[...new Set(unknown)].join(", ")}`,
           },
           { status: 422 },
         );
       }
     }
 
+    const monitorConfig = {
+      source_id: sourceUuid,
+      metric: m,
+      severity: event.severity,
+      message: event.message ?? null,
+      enabled: event.enabled,
+      visualization: event.visualization ?? null,
+      notification_target_ids: targetIds,
+      context_columns: contextColumns,
+      filters,
+      delivery: event.delivery ?? null,
+      ...pinned,
+    };
     if (isApiKeyAuth) {
-      await adminEventMonitorQueries.upsert(orgId, {
-        source_id: sourceUuid,
-        metric: m,
-        severity: event.severity,
-        message: event.message ?? null,
-        enabled: event.enabled,
-        visualization: event.visualization ?? null,
-        notification_target_ids: targetIds,
-        context_columns: contextColumns,
-        ...pinned,
-      });
+      await adminEventMonitorQueries.upsert(orgId, monitorConfig);
     } else {
-      await eventMonitorQueries.upsert(orgId, {
-        source_id: sourceUuid,
-        metric: m,
-        severity: event.severity,
-        message: event.message ?? null,
-        enabled: event.enabled,
-        visualization: event.visualization ?? null,
-        notification_target_ids: targetIds,
-        context_columns: contextColumns,
-        ...pinned,
-      });
+      await eventMonitorQueries.upsert(orgId, monitorConfig);
     }
   }
 

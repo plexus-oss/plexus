@@ -66,6 +66,11 @@ export interface FireEventAlertParams {
   message: string;
   contextSnapshot?: Record<string, unknown>;
   eventMetadata?: Record<string, unknown>;
+  /**
+   * Bypass the 5-minute dedup window (per_row delivery — each row is a
+   * distinct event, and the poll watermark already guards against re-fires).
+   */
+  skipDedup?: boolean;
 }
 
 /**
@@ -77,7 +82,8 @@ export async function fireEventAlert(
 ): Promise<Alert | null> {
   const { orgId, sourceId, metric } = params;
   const dedupKey = `event:${metric}`;
-  if (hasRecentAlert(orgId, sourceId, dedupKey)) return null;
+  if (!params.skipDedup && hasRecentAlert(orgId, sourceId, dedupKey))
+    return null;
 
   const alert = await alertQueries.create(orgId, {
     source_id: sourceId,

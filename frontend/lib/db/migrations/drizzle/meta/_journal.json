@@ -204,6 +204,13 @@
       "when": 1786466557551,
       "tag": "0028_event_monitor_context_columns",
       "breakpoints": true
+    },
+    {
+      "idx": 29,
+      "version": "7",
+      "when": 1786467581562,
+      "tag": "0029_event_monitor_filters_delivery",
+      "breakpoints": true
     }
   ]
 }

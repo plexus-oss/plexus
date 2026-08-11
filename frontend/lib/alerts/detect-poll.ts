@@ -423,10 +423,21 @@ async function pollConnectionSource(
       const { target } = resolved;
       const nowIso = new Date().toISOString();
 
+      // User-authored row predicate — event monitors only.
+      const filters =
+        unit.kind === "event" && unit.row.filters?.length
+          ? { filters: unit.row.filters }
+          : {};
+
       if (!monitor.poll_watermark) {
         // First tick (or post-reconfigure): record where "now" is, don't alert.
         const init = await runQuery(
-          buildInitWatermarkSql({ dialect, ...target }),
+          buildInitWatermarkSql({
+            dialect,
+            ...target,
+            numericCursor: target.cursorKind === "numeric",
+            ...filters,
+          }),
         );
         recordSuccess(source.id);
         const wm = init.rows[0]?.plexus_wm;
@@ -439,6 +450,9 @@ async function pollConnectionSource(
         continue;
       }
 
+      // NOTE: with filters, the watermark only advances past MATCHING rows —
+      // a long non-matching tail after the watermark is re-scanned each tick
+      // (indexed range scan; same behavior as the entity predicate).
       const result = await runQuery(
         buildNewRowsSql({
           dialect,
@@ -449,6 +463,7 @@ async function pollConnectionSource(
           ...(unit.kind === "event" && unit.row.context_columns?.length
             ? { contextColumns: unit.row.context_columns }
             : {}),
+          ...filters,
         }),
       );
       recordSuccess(source.id);
@@ -538,6 +553,32 @@ function contextValues(
 }
 
 const MAX_SAMPLE_ROWS = 3;
+/** per_row delivery: individual alerts per tick before collapsing to a digest. */
+const MAX_PER_ROW_ALERTS = 10;
+
+/** "email=ann@example.com, name=Ann" or "metric = value" for one row. */
+function rowDetail(
+  monitor: EventMonitorRecord,
+  row: PolledRow,
+): { detail: string; hasContext: boolean; values: Record<string, string> } {
+  const values = contextValues(monitor.context_columns, row);
+  const pairs = Object.entries(values);
+  return pairs.length > 0
+    ? { detail: pairs.map(([k, v]) => `${k}=${v}`).join(", "), hasContext: true, values }
+    : {
+        detail: `${monitor.metric} = ${String(row.plexus_value)}`,
+        hasContext: false,
+        values,
+      };
+}
+
+function visualizationSnapshot(
+  monitor: EventMonitorRecord,
+): Record<string, unknown> {
+  return monitor.visualization
+    ? { _visualization: JSON.parse(JSON.stringify(monitor.visualization)) }
+    : {};
+}
 
 async function fireEventBatch(
   monitor: EventMonitorRecord,
@@ -546,21 +587,19 @@ async function fireEventBatch(
   rows: PolledRow[],
   nowIso: string,
 ): Promise<boolean> {
+  if (monitor.delivery === "per_row") {
+    return fireEventPerRow(monitor, source, target, rows, nowIso);
+  }
+
   const last = rows[rows.length - 1];
-  const lastValues = contextValues(monitor.context_columns, last);
-  const ctxPairs = Object.entries(lastValues);
+  const { detail, hasContext, values: lastValues } = rowDetail(monitor, last);
 
   // "New users row — email=ann@example.com, name=Ann (+2 more)" when context
   // columns are configured; the monitored column's value otherwise.
-  const detail =
-    ctxPairs.length > 0
-      ? ctxPairs.map(([k, v]) => `${k}=${v}`).join(", ")
-      : `${monitor.metric} = ${String(last.plexus_value)}`;
   const more = rows.length > 1 ? ` (+${rows.length - 1} more)` : "";
-  const defaultMessage =
-    ctxPairs.length > 0
-      ? `New ${target.table} row — ${detail}${more}`
-      : `New event: ${detail}${more}`;
+  const defaultMessage = hasContext
+    ? `New ${target.table} row — ${detail}${more}`
+    : `New event: ${detail}${more}`;
 
   // Newest-first sample rows, kept under an underscore key: renderers skip
   // object values, so these are for the API/detail views, not the flat rows.
@@ -587,11 +626,7 @@ async function fireEventBatch(
       ...pollContext(target, rows),
       ...lastValues,
       ...(samples ? { _samples: samples } : {}),
-      ...(monitor.visualization
-        ? {
-            _visualization: JSON.parse(JSON.stringify(monitor.visualization)),
-          }
-        : {}),
+      ...visualizationSnapshot(monitor),
     },
     eventMetadata: {
       value: rows.length,
@@ -601,6 +636,81 @@ async function fireEventBatch(
     },
   });
   return alert !== null;
+}
+
+/**
+ * per_row delivery: one alert per matching row (each bypasses the dedup
+ * window — every row is a distinct event), capped at MAX_PER_ROW_ALERTS per
+ * tick; the overflow collapses into one digest alert so a backfill can't
+ * storm the notification channels.
+ */
+async function fireEventPerRow(
+  monitor: EventMonitorRecord,
+  source: Source,
+  target: PolledTarget,
+  rows: PolledRow[],
+  nowIso: string,
+): Promise<boolean> {
+  let fired = false;
+  const individual = rows.slice(0, MAX_PER_ROW_ALERTS);
+  for (const row of individual) {
+    const { detail, hasContext, values } = rowDetail(monitor, row);
+    const defaultMessage = hasContext
+      ? `New ${target.table} row — ${detail}`
+      : `New event: ${detail}`;
+    const alert = await fireEventAlert({
+      orgId: monitor.org_id,
+      sourceId: source.id,
+      source,
+      metric: monitor.metric,
+      value: 1,
+      severity: monitor.severity,
+      triggeredAt: nowIso,
+      message: monitor.message || defaultMessage,
+      skipDedup: true,
+      contextSnapshot: {
+        table: target.table,
+        row_ts: String(row.plexus_ts),
+        latest_value: String(row.plexus_value),
+        ...values,
+        ...visualizationSnapshot(monitor),
+      },
+      eventMetadata: {
+        value: 1,
+        monitor_id: monitor.id,
+        table: target.table,
+        time_column: target.timeColumn,
+      },
+    });
+    fired = fired || alert !== null;
+  }
+
+  const overflow = rows.length - individual.length;
+  if (overflow > 0) {
+    const alert = await fireEventAlert({
+      orgId: monitor.org_id,
+      sourceId: source.id,
+      source,
+      metric: monitor.metric,
+      value: overflow,
+      severity: monitor.severity,
+      triggeredAt: nowIso,
+      message: `${overflow} more new ${target.table} rows in the same batch`,
+      skipDedup: true,
+      contextSnapshot: {
+        ...pollContext(target, rows),
+        ...visualizationSnapshot(monitor),
+      },
+      eventMetadata: {
+        value: overflow,
+        monitor_id: monitor.id,
+        table: target.table,
+        time_column: target.timeColumn,
+      },
+    });
+    fired = fired || alert !== null;
+  }
+  return fired;
 }
 
 async function fireLimitBatch(

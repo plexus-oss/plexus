@@ -1026,6 +1026,8 @@ export const adminEventMonitorQueries = {
       table_name?: string | null;
       time_column?: string | null;
       context_columns?: string[] | null;
+      filters?: unknown;
+      delivery?: string | null;
     },
   ): Promise<void> => {
     await db
@@ -1042,6 +1044,8 @@ export const adminEventMonitorQueries = {
         table_name: data.table_name ?? null,
         time_column: data.time_column ?? null,
         context_columns: data.context_columns ?? null,
+        filters: data.filters ?? null,
+        delivery: data.delivery ?? null,
       } as typeof eventMonitors.$inferInsert)
       .onConflictDoUpdate({
         target: [
@@ -1062,6 +1066,8 @@ export const adminEventMonitorQueries = {
           table_name: data.table_name ?? null,
           time_column: data.time_column ?? null,
           context_columns: data.context_columns ?? null,
+          filters: data.filters ?? null,
+          delivery: data.delivery ?? null,
           // Reconfigure ⇒ reset the poll cursor (init tick never alerts).
           poll_watermark: null,
         },

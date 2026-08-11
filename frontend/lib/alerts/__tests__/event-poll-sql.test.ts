@@ -157,6 +157,113 @@ describe("buildNewRowsSql (entity filter)", () => {
   });
 });
 
+describe("buildNewRowsSql (monitor filters)", () => {
+  it("ANDs predicates after the watermark (postgres)", () => {
+    expect(
+      buildNewRowsSql({
+        dialect: "postgres",
+        ...base,
+        filters: [
+          { column: "event_type", op: "eq", value: "signup" },
+          { column: "plan", op: "neq", value: "free" },
+        ],
+      }),
+    ).toBe(
+      `SELECT "ts"::text AS plexus_ts, "temp" AS plexus_value ` +
+        `FROM "readings" ` +
+        `WHERE "ts" > '2026-07-20 10:00:00.123456' ` +
+        `AND "event_type" = 'signup' ` +
+        `AND "plan" != 'free' ` +
+        `ORDER BY "ts" ASC ` +
+        `LIMIT 1000`,
+    );
+  });
+
+  it("renders comparison ops and escapes values (clickhouse)", () => {
+    expect(
+      buildNewRowsSql({
+        dialect: "clickhouse",
+        ...base,
+        filters: [{ column: "amount", op: "gte", value: "o'brien" }],
+      }),
+    ).toBe(
+      "SELECT toString(`ts`) AS plexus_ts, `temp` AS plexus_value " +
+        "FROM `readings` " +
+        "WHERE `ts` > '2026-07-20 10:00:00.123456' " +
+        "AND `amount` >= 'o''brien' " +
+        "ORDER BY `ts` ASC " +
+        "LIMIT 1000",
+    );
+  });
+
+  it("empty filters leave SQL byte-identical", () => {
+    expect(
+      buildNewRowsSql({ dialect: "postgres", ...base, filters: [] }),
+    ).toBe(buildNewRowsSql({ dialect: "postgres", ...base }));
+  });
+
+  it("entity filter and monitor filters both apply, entity first", () => {
+    expect(
+      buildNewRowsSql({
+        dialect: "postgres",
+        ...base,
+        filterColumn: "device_id",
+        filterValue: "dev-1",
+        filters: [{ column: "event_type", op: "eq", value: "signup" }],
+      }),
+    ).toBe(
+      `SELECT "ts"::text AS plexus_ts, "temp" AS plexus_value ` +
+        `FROM "readings" ` +
+        `WHERE "ts" > '2026-07-20 10:00:00.123456' ` +
+        `AND "device_id" = 'dev-1' ` +
+        `AND "event_type" = 'signup' ` +
+        `ORDER BY "ts" ASC ` +
+        `LIMIT 1000`,
+    );
+  });
+});
+
+describe("buildInitWatermarkSql (numeric cursor)", () => {
+  const target = { table: "readings", timeColumn: "id" } as const;
+
+  it("postgres falls back to '0', not the clock", () => {
+    expect(
+      buildInitWatermarkSql({
+        dialect: "postgres",
+        ...target,
+        numericCursor: true,
+      }),
+    ).toBe(`SELECT COALESCE(MAX("id")::text, '0') AS plexus_wm FROM "readings"`);
+  });
+
+  it("clickhouse guards empty with '0'", () => {
+    expect(
+      buildInitWatermarkSql({
+        dialect: "clickhouse",
+        ...target,
+        numericCursor: true,
+      }),
+    ).toBe(
+      "SELECT if(count() = 0, '0', toString(max(`id`))) AS plexus_wm FROM `readings`",
+    );
+  });
+
+  it("applies monitor filters to the WHERE clause", () => {
+    expect(
+      buildInitWatermarkSql({
+        dialect: "postgres",
+        table: "readings",
+        timeColumn: "id",
+        numericCursor: true,
+        filters: [{ column: "event_type", op: "eq", value: "signup" }],
+      }),
+    ).toBe(
+      `SELECT COALESCE(MAX("id")::text, '0') AS plexus_wm ` +
+        `FROM "readings" WHERE "event_type" = 'signup'`,
+    );
+  });
+});
+
 describe("buildInitWatermarkSql (no filter — byte-identical baseline)", () => {
   const target = { table: "readings", timeColumn: "ts" } as const;
 

@@ -2154,6 +2154,15 @@ export interface AlertVisualization {
   panel_config: Record<string, unknown>;
 }
 
+/** One ANDed row predicate on an event monitor's poll query. */
+export interface EventMonitorFilter {
+  column: string;
+  op: "eq" | "neq" | "gt" | "gte" | "lt" | "lte";
+  value: string;
+}
+
+export type EventMonitorDelivery = "digest" | "per_row";
+
 export interface EventMonitorRecord {
   id: string;
   org_id: string;
@@ -2169,6 +2178,8 @@ export interface EventMonitorRecord {
   poll_watermark: string | null;
   last_polled_at: string | null;
   context_columns: string[] | null;
+  filters: EventMonitorFilter[] | null;
+  delivery: EventMonitorDelivery | null;
   created_at: string;
   updated_at: string;
 }

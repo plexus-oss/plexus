@@ -42,6 +42,8 @@ import type {
   SourcePermission,
   ShareLinkAccess,
   EventMonitorRecord,
+  EventMonitorFilter,
+  EventMonitorDelivery,
   DeviceSchemaRecord,
   ColumnMetadataRecord,
   SourceAssociation,
@@ -932,6 +934,8 @@ export const eventMonitorQueries = {
       table_name?: string | null;
       time_column?: string | null;
       context_columns?: string[] | null;
+      filters?: EventMonitorFilter[] | null;
+      delivery?: EventMonitorDelivery | null;
     },
   ): Promise<EventMonitorRecord[]> => {
     return (
@@ -949,6 +953,8 @@ export const eventMonitorQueries = {
           table_name: config.table_name ?? null,
           time_column: config.time_column ?? null,
           context_columns: config.context_columns ?? null,
+          filters: config.filters ?? null,
+          delivery: config.delivery ?? null,
         } as typeof eventMonitors.$inferInsert)
         // notification_target_ids: undefined = preserve existing routing on
         // reconfigure; only an explicit value (array or null) overwrites.
@@ -969,6 +975,8 @@ export const eventMonitorQueries = {
             table_name: config.table_name ?? null,
             time_column: config.time_column ?? null,
             context_columns: config.context_columns ?? null,
+            filters: config.filters ?? null,
+            delivery: config.delivery ?? null,
             // Reconfiguring a monitor re-initializes its poll cursor; the init
             // tick never alerts, so this is safe and avoids stale watermarks
             // pointing at a different table.

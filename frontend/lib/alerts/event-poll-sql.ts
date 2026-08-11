@@ -84,6 +84,40 @@ function entityFilter(
   return `AND ${quoteIdent(dialect, filterColumn)} = '${escapeLiteral(filterValue)}' `;
 }
 
+/** User-authored row predicate on an event monitor (ANDed). */
+export interface MonitorFilter {
+  column: string;
+  op: "eq" | "neq" | "gt" | "gte" | "lt" | "lte";
+  value: string;
+}
+
+const FILTER_OPS: Record<MonitorFilter["op"], string> = {
+  eq: "=",
+  neq: "!=",
+  gt: ">",
+  gte: ">=",
+  lt: "<",
+  lte: "<=",
+};
+
+/**
+ * Monitor filters rendered as ` AND "col" op 'val'` clauses. Values are always
+ * inlined as quoted literals — every supported dialect coerces `'5'` against a
+ * numeric column. Empty/absent filters keep the SQL byte-identical.
+ */
+function monitorFilters(
+  dialect: PollDialect,
+  filters?: MonitorFilter[],
+): string {
+  if (!filters?.length) return "";
+  return filters
+    .map(
+      (f) =>
+        `AND ${quoteIdent(dialect, f.column)} ${FILTER_OPS[f.op]} '${escapeLiteral(f.value)}' `,
+    )
+    .join("");
+}
+
 /**
  * Rows newer than the watermark, oldest first, capped. Selects only the time
  * column (as DB-rendered text), the monitored column, and any declared context
@@ -100,6 +134,7 @@ export function buildNewRowsSql(params: {
   filterColumn?: string;
   filterValue?: string;
   contextColumns?: string[];
+  filters?: MonitorFilter[];
 }): string {
   const { dialect, timeColumn, valueColumn, watermark } = params;
   const limit = params.limit ?? POLL_ROW_LIMIT;
@@ -113,16 +148,19 @@ export function buildNewRowsSql(params: {
     `FROM ${tableRef(params)} ` +
     `WHERE ${timeCol} > '${escapeLiteral(watermark)}' ` +
     entityFilter(dialect, params.filterColumn, params.filterValue) +
+    monitorFilters(dialect, params.filters) +
     `ORDER BY ${timeCol} ASC ` +
     `LIMIT ${Math.trunc(limit)}`
   );
 }
 
 /**
- * Initial watermark = the newest existing row's time, rendered by the source
- * DB. Empty table falls back to the source DB's own clock (not ours — avoids
- * app/DB clock skew). ClickHouse needs a count() guard because max() over an
- * empty table returns the type default (1970), not NULL.
+ * Initial watermark = the newest existing row's cursor value, rendered by the
+ * source DB. For a TIME cursor an empty table falls back to the source DB's
+ * own clock (not ours — avoids app/DB clock skew). For a NUMERIC cursor
+ * (monotonic id) the clock fallback would poison the comparison, so empty
+ * falls back to '0'. ClickHouse needs a count() guard because max() over an
+ * empty table returns the type default (1970 / 0), not NULL.
  */
 export function buildInitWatermarkSql(params: {
   dialect: PollDialect;
@@ -131,15 +169,35 @@ export function buildInitWatermarkSql(params: {
   timeColumn: string;
   filterColumn?: string;
   filterValue?: string;
+  filters?: MonitorFilter[];
+  /** Cursor column is integer-typed (id cursor), not a timestamp. */
+  numericCursor?: boolean;
 }): string {
   const { dialect, timeColumn, filterColumn, filterValue } = params;
   const col = quoteIdent(dialect, timeColumn);
-  // No base WHERE clause here — the entity predicate introduces one.
-  const where =
-    filterColumn != null && filterValue != null
-      ? ` WHERE ${quoteIdent(dialect, filterColumn)} = '${escapeLiteral(filterValue)}'`
-      : "";
+  // No base WHERE clause here — the first predicate introduces one.
+  const clauses = [
+    ...(filterColumn != null && filterValue != null
+      ? [`${quoteIdent(dialect, filterColumn)} = '${escapeLiteral(filterValue)}'`]
+      : []),
+    ...(params.filters ?? []).map(
+      (f) =>
+        `${quoteIdent(dialect, f.column)} ${FILTER_OPS[f.op]} '${escapeLiteral(f.value)}'`,
+    ),
+  ];
+  const where = clauses.length > 0 ? ` WHERE ${clauses.join(" AND ")}` : "";
   const from = `FROM ${tableRef(params)}${where}`;
+  if (params.numericCursor) {
+    switch (dialect) {
+      case "postgres":
+      case "timescaledb":
+        return `SELECT COALESCE(MAX(${col})::text, '0') AS plexus_wm ${from}`;
+      case "mysql":
+        return `SELECT COALESCE(CAST(MAX(${col}) AS CHAR), '0') AS plexus_wm ${from}`;
+      case "clickhouse":
+        return `SELECT if(count() = 0, '0', toString(max(${col}))) AS plexus_wm ${from}`;
+    }
+  }
   switch (dialect) {
     case "postgres":
     case "timescaledb":

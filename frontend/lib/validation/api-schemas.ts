@@ -260,6 +260,9 @@ export const CreateMonitorSchema = z
         // Connection sources: which table the metric column belongs to, so the
         // poll loop doesn't have to guess from the schema snapshot.
         table: z.string().min(1).optional(),
+        // Explicit poll cursor ("watch for new rows by"): a timestamp column or
+        // a monotonic integer id. Omitted = auto-detect (prefers created_at).
+        time_column: z.string().min(1).optional(),
         // Extra columns fetched with each new row and shown in the alert
         // (e.g. email, name) — so notifications carry the actual row, not a count.
         context_columns: z
@@ -267,6 +270,22 @@ export const CreateMonitorSchema = z
           .max(5)
           .nullable()
           .optional(),
+        // Row predicate ANDed into the poll query — "new signup" means
+        // event_type = 'signup', not "any new row in the table".
+        filters: z
+          .array(
+            z.object({
+              column: z.string().min(1),
+              op: z.enum(["eq", "neq", "gt", "gte", "lt", "lte"]),
+              value: z.string().max(200),
+            }),
+          )
+          .max(3)
+          .nullable()
+          .optional(),
+        // "digest" (default): one alert per poll batch; "per_row": one alert
+        // per matching row (capped per tick).
+        delivery: z.enum(["digest", "per_row"]).optional(),
         visualization: z
           .object({
             panel_type: z.string(),
