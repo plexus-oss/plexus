@@ -279,6 +279,73 @@ export const alertQueries = {
     return counts;
   },
 
+  /**
+   * Open ('open'-status) alert count per source, for the whole org in one
+   * grouped query — powers the fleet rollup's "open alerts" column. Optional
+   * `sourceIds` scopes to an access allow-list (same pattern as
+   * getCountsByStatus). Sources with zero open alerts simply don't appear.
+   */
+  getOpenCountsBySource: async (
+    orgId: string,
+    sourceIds?: string[],
+  ): Promise<Array<{ source_id: string; count: number }>> => {
+    const filters: SQL[] = [eq(alerts.org_id, orgId), eq(alerts.status, "open")];
+    if (sourceIds && sourceIds.length > 0) {
+      filters.push(inArray(alerts.source_id, sourceIds));
+    }
+    const rows = await db
+      .select({
+        source_id: alerts.source_id,
+        count: sql<number>`count(*)`.mapWith(Number),
+      })
+      .from(alerts)
+      .where(and(...filters))
+      .groupBy(alerts.source_id);
+    return rows
+      .filter((r): r is { source_id: string; count: number } => !!r.source_id)
+      .map((r) => ({ source_id: r.source_id, count: r.count }));
+  },
+
+  /**
+   * Verdict tally per source over the recency window — powers the fleet
+   * rollup's "noise" column. Counts verdicted alerts (helpful|noise) grouped by
+   * source. Unbounded rows in the window; a maintained aggregate is the next
+   * step if volume demands it (see getVerdictStats).
+   */
+  getNoiseBySource: async (
+    orgId: string,
+    sourceIds?: string[],
+  ): Promise<Array<{ source_id: string; noise: number; total: number }>> => {
+    const since = new Date(
+      Date.now() - VERDICT_WINDOW_DAYS * 86_400_000,
+    ).toISOString();
+    const filters: SQL[] = [
+      eq(alerts.org_id, orgId),
+      isNotNull(alerts.current_verdict),
+      gte(alerts.triggered_at, since),
+    ];
+    if (sourceIds && sourceIds.length > 0) {
+      filters.push(inArray(alerts.source_id, sourceIds));
+    }
+    const rows = await db
+      .select({
+        source_id: alerts.source_id,
+        noise: sql<number>`count(*) filter (where ${alerts.current_verdict} = 'noise')`.mapWith(
+          Number,
+        ),
+        total: sql<number>`count(*)`.mapWith(Number),
+      })
+      .from(alerts)
+      .where(and(...filters))
+      .groupBy(alerts.source_id);
+    return rows
+      .filter(
+        (r): r is { source_id: string; noise: number; total: number } =>
+          !!r.source_id,
+      )
+      .map((r) => ({ source_id: r.source_id, noise: r.noise, total: r.total }));
+  },
+
   delete: async (orgId: string, alertId: string): Promise<boolean> => {
     await db
       .delete(alerts)

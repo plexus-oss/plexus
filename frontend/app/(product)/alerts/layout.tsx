@@ -14,6 +14,10 @@ const TABS = [
     label: "Monitors",
   },
   {
+    id: "/alerts/fleet",
+    label: "Fleet",
+  },
+  {
     id: "/alerts/integrations",
     label: "Integrations",
   },
