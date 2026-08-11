@@ -156,6 +156,41 @@ async function validateTargetOwnership(
   return null;
 }
 
+/** UI-facing poll health for a monitor row. */
+interface MonitorHealth {
+  state: "working" | "skipped" | "failing" | "pending";
+  reason: string | null;
+  checked_at: string | null;
+}
+
+/**
+ * Turn the raw last-poll outcome into a UI state. An unpinned connection
+ * monitor that hasn't been evaluated yet is reported as skipped up front (the
+ * poller will skip it every tick), rather than a misleading "pending".
+ */
+function deriveHealth(
+  h: { status: string | null; error: string | null; at: string | null },
+  unpinned: boolean,
+): MonitorHealth {
+  switch (h.status) {
+    case "error":
+      return { state: "failing", reason: h.error, checked_at: h.at };
+    case "skipped":
+      return { state: "skipped", reason: h.error, checked_at: h.at };
+    case "ok":
+      return { state: "working", reason: null, checked_at: h.at };
+    default:
+      if (unpinned) {
+        return {
+          state: "skipped",
+          reason: "Not scanning — the metric isn't pinned to a table",
+          checked_at: null,
+        };
+      }
+      return { state: "pending", reason: null, checked_at: null };
+  }
+}
+
 /** The single snapshot table containing the column, or undefined if 0/many. */
 function uniqueTableWithColumn(
   snapshot: SchemaInfo | undefined,
@@ -181,6 +216,9 @@ export const GET = withDualAuth(async (_req, { orgId, userId, isApiKeyAuth }) =>
     created_at: string;
     table_name?: string | null;
     time_column?: string | null;
+    last_status?: string | null;
+    last_error?: string | null;
+    last_evaluated_at?: string | null;
     sources?: { slug: string; name: string | null };
   }> = [];
   try {
@@ -200,6 +238,9 @@ export const GET = withDualAuth(async (_req, { orgId, userId, isApiKeyAuth }) =>
           created_at: sourceLimits.created_at,
           table_name: sourceLimits.table_name,
           time_column: sourceLimits.time_column,
+          last_status: sourceLimits.last_status,
+          last_error: sourceLimits.last_error,
+          last_evaluated_at: sourceLimits.last_evaluated_at,
           slug: sources.slug,
           name: sources.name,
         })
@@ -219,6 +260,9 @@ export const GET = withDualAuth(async (_req, { orgId, userId, isApiKeyAuth }) =>
         created_at: r.created_at,
         table_name: r.table_name,
         time_column: r.time_column,
+        last_status: r.last_status,
+        last_error: r.last_error,
+        last_evaluated_at: r.last_evaluated_at,
         sources: { slug: r.slug, name: r.name },
       })) as typeof limits;
     }
@@ -332,6 +376,12 @@ export const GET = withDualAuth(async (_req, { orgId, userId, isApiKeyAuth }) =>
       } | null;
       /** Connection monitor missing table/time-column — the poller skips it. */
       unpinned: boolean;
+      /** Worst poll outcome across this monitor's records (see mergeHealth). */
+      _health: {
+        status: string | null;
+        error: string | null;
+        at: string | null;
+      };
       created_at: string;
     }
   >();
@@ -344,6 +394,28 @@ export const GET = withDualAuth(async (_req, { orgId, userId, isApiKeyAuth }) =>
     timeColumn?: string | null,
   ): boolean =>
     sourceTypes[sourceId] === "connection" && !(tableName && timeColumn);
+
+  // Keep the more alarming of two poll outcomes when a (source, metric) has
+  // both a threshold and an event record: error > skipped > ok > unknown.
+  const HEALTH_RANK: Record<string, number> = { error: 4, skipped: 3, ok: 2 };
+  const mergeHealth = (
+    cur: { status: string | null; error: string | null; at: string | null },
+    next: {
+      status?: string | null;
+      error?: string | null;
+      at?: string | null;
+    },
+  ) => {
+    const nextStatus = next.status ?? null;
+    if ((HEALTH_RANK[nextStatus ?? ""] ?? 1) >= (HEALTH_RANK[cur.status ?? ""] ?? 1)) {
+      return {
+        status: nextStatus,
+        error: next.error ?? null,
+        at: next.at ?? null,
+      };
+    }
+    return cur;
+  };
 
   // Threshold routing targets live on the alert_rules threshold row (keyed by
   // slug), not on source_limits — resolve them per (slug, metric).
@@ -387,6 +459,11 @@ export const GET = withDualAuth(async (_req, { orgId, userId, isApiKeyAuth }) =>
         l.table_name as string | null | undefined,
         l.time_column as string | null | undefined,
       ),
+      _health: {
+        status: (l.last_status as string | null) ?? null,
+        error: (l.last_error as string | null) ?? null,
+        at: (l.last_evaluated_at as string | null) ?? null,
+      },
       created_at: l.created_at as string,
     });
   }
@@ -409,6 +486,11 @@ export const GET = withDualAuth(async (_req, { orgId, userId, isApiKeyAuth }) =>
         time_column: e.time_column,
       };
       existing.unpinned = existing.unpinned || eventUnpinned;
+      existing._health = mergeHealth(existing._health, {
+        status: e.last_status,
+        error: e.last_error,
+        at: e.last_evaluated_at,
+      });
       if (new Date(e.created_at) < new Date(existing.created_at)) {
         existing.created_at = e.created_at;
       }
@@ -432,6 +514,11 @@ export const GET = withDualAuth(async (_req, { orgId, userId, isApiKeyAuth }) =>
           time_column: e.time_column,
         },
         unpinned: eventUnpinned,
+        _health: {
+          status: e.last_status ?? null,
+          error: e.last_error ?? null,
+          at: e.last_evaluated_at ?? null,
+        },
         created_at: e.created_at,
       });
     }
@@ -450,9 +537,11 @@ export const GET = withDualAuth(async (_req, { orgId, userId, isApiKeyAuth }) =>
       type = "event";
     }
 
+    const { _health, ...rest } = m;
     return {
-      ...m,
+      ...rest,
       type,
+      health: deriveHealth(_health, m.unpinned) as MonitorHealth | null,
       offline: null as {
         id: string;
         timeout_seconds: number;
@@ -476,6 +565,9 @@ export const GET = withDualAuth(async (_req, { orgId, userId, isApiKeyAuth }) =>
         threshold: null,
         event: null,
         unpinned: false,
+        // Offline monitors are evaluated by the separate offline loop, not the
+        // poll loop that records health here.
+        health: null as MonitorHealth | null,
         offline: {
           id: o.id,
           timeout_seconds: o.timeout_seconds,

@@ -192,22 +192,32 @@ export const alertQueries = {
 
 
   /**
-   * Roll up recent operator verdicts for the rule/limit that fired an alert,
-   * scoped to one source — "this rule was marked noise N of the last M times
-   * on THIS device". Keyed by rule_id (alert-service rules) or limit_id
-   * (threshold limits); pass whichever the alert carries plus its source_id.
+   * Roll up recent operator verdicts for the rule/limit/event that fired an
+   * alert, scoped to one source — "this monitor was marked noise N of the last
+   * M times on THIS source". Keyed by rule_id (alert-service rules), limit_id
+   * (threshold limits), or eventMetric (event monitors, which carry neither id
+   * — identified by trigger_type='event' + source_id + metric). Pass whichever
+   * the alert carries plus its source_id.
    *
    * Windowed by recency (latest VERDICT_SAMPLE alerts in the last
-   * VERDICT_WINDOW_DAYS) so a rule's reputation reflects current behavior, not
-   * a stale lifetime tally. One indexed, bounded round trip — read live at
+   * VERDICT_WINDOW_DAYS) so a monitor's reputation reflects current behavior,
+   * not a stale lifetime tally. One indexed, bounded round trip — read live at
    * panel-open. (A maintained aggregate is the next step if volume demands it.)
    */
   getVerdictStats: async (
     orgId: string,
-    by: { ruleId?: string | null; limitId?: string | null; sourceId?: string | null },
+    by: {
+      ruleId?: string | null;
+      limitId?: string | null;
+      sourceId?: string | null;
+      eventMetric?: string | null;
+    },
   ): Promise<VerdictStats> => {
     const empty: VerdictStats = { helpful: 0, noise: 0, total: 0 };
-    if (!by.ruleId && !by.limitId) return empty;
+    // Event monitors have no rule/limit id, so they need source + metric.
+    const isEvent = !by.ruleId && !by.limitId && !!by.eventMetric;
+    if (!by.ruleId && !by.limitId && !isEvent) return empty;
+    if (isEvent && !by.sourceId) return empty;
     const since = new Date(
       Date.now() - VERDICT_WINDOW_DAYS * 86_400_000,
     ).toISOString();
@@ -217,7 +227,12 @@ export const alertQueries = {
       gte(alerts.triggered_at, since),
       by.ruleId
         ? eq(alerts.rule_id, by.ruleId)
-        : eq(alerts.limit_id, by.limitId as string),
+        : by.limitId
+          ? eq(alerts.limit_id, by.limitId)
+          : and(
+              eq(alerts.trigger_type, "event"),
+              eq(alerts.metric, by.eventMetric as string),
+            )!,
     ];
     if (by.sourceId) filters.push(eq(alerts.source_id, by.sourceId));
 

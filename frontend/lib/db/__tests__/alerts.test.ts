@@ -1,8 +1,24 @@
 import { describe, it, expect } from "vitest";
 import { eq } from "drizzle-orm";
 import { db } from "../client";
-import { alerts, alertEvents } from "../schema";
+import { alerts, alertEvents, sources } from "../schema";
 import { alertQueries, alertEventQueries } from "../queries/alerts";
+
+let srcSeq = 0;
+async function insertSource(): Promise<string> {
+  const slug = `verdict-src-${++srcSeq}`;
+  const [row] = await db
+    .insert(sources)
+    .values({
+      org_id: "test-org",
+      slug,
+      name: slug,
+      source_type: "connection",
+      status: "online",
+    } as typeof sources.$inferInsert)
+    .returning();
+  return row.id;
+}
 
 const ORG = "test-org";
 
@@ -67,6 +83,54 @@ describe("alertQueries.update — tx support", () => {
 
     const row = await getAlert(id);
     expect(row.status).toBe("resolved");
+  });
+});
+
+describe("alertQueries.getVerdictStats — event monitors", () => {
+  async function insertEventAlert(
+    sourceId: string,
+    metric: string,
+    verdict: "helpful" | "noise" | null,
+  ): Promise<void> {
+    await db.insert(alerts).values({
+      org_id: ORG,
+      source_id: sourceId,
+      trigger_type: "event",
+      metric,
+      value: 1,
+      severity: "info",
+      status: "open",
+      is_alert_active: true,
+      current_verdict: verdict,
+    } as typeof alerts.$inferInsert);
+  }
+
+  it("tallies verdicts for an event monitor by (source_id, metric)", async () => {
+    const src = await insertSource();
+    const otherSrc = await insertSource();
+    await insertEventAlert(src, "signup", "noise");
+    await insertEventAlert(src, "signup", "noise");
+    await insertEventAlert(src, "signup", "helpful");
+    await insertEventAlert(src, "signup", null); // unverdicted — ignored
+    // Same metric, different source — must not leak in.
+    await insertEventAlert(otherSrc, "signup", "noise");
+    // Different metric on the same source — must not leak in.
+    await insertEventAlert(src, "login", "noise");
+
+    const stats = await alertQueries.getVerdictStats(ORG, {
+      sourceId: src,
+      eventMetric: "signup",
+    });
+    expect(stats).toEqual({ helpful: 1, noise: 2, total: 3 });
+  });
+
+  it("returns empty when an event key lacks a source", async () => {
+    const src = await insertSource();
+    await insertEventAlert(src, "signup", "noise");
+    const stats = await alertQueries.getVerdictStats(ORG, {
+      eventMetric: "signup",
+    });
+    expect(stats).toEqual({ helpful: 0, noise: 0, total: 0 });
   });
 });
 

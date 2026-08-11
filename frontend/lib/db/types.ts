@@ -1163,6 +1163,9 @@ export interface Database {
           time_column: string | null;
           poll_watermark: string | null;
           last_polled_at: string | null;
+          last_status: string | null;
+          last_error: string | null;
+          last_evaluated_at: string | null;
           created_at: string;
           updated_at: string;
         };
@@ -1179,6 +1182,9 @@ export interface Database {
           time_column?: string | null;
           poll_watermark?: string | null;
           last_polled_at?: string | null;
+          last_status?: string | null;
+          last_error?: string | null;
+          last_evaluated_at?: string | null;
           created_at?: string;
           updated_at?: string;
         };
@@ -1195,6 +1201,9 @@ export interface Database {
           time_column?: string | null;
           poll_watermark?: string | null;
           last_polled_at?: string | null;
+          last_status?: string | null;
+          last_error?: string | null;
+          last_evaluated_at?: string | null;
           created_at?: string;
           updated_at?: string;
         };
@@ -2180,9 +2189,15 @@ export interface EventMonitorRecord {
   context_columns: string[] | null;
   filters: EventMonitorFilter[] | null;
   delivery: EventMonitorDelivery | null;
+  last_status: MonitorHealthStatus | null;
+  last_error: string | null;
+  last_evaluated_at: string | null;
   created_at: string;
   updated_at: string;
 }
+
+/** Outcome of the most recent poll attempt on a monitor. */
+export type MonitorHealthStatus = "ok" | "skipped" | "error";
 
 export type DashboardShareLink =
   Database["public"]["Tables"]["dashboard_share_links"]["Row"];

@@ -223,6 +223,14 @@ export const eventMonitors = pgTable(
     // "digest" (default): one alert per poll batch. "per_row": one alert per
     // matching row (capped), so 3 signups = 3 alerts, not one alert saying 3.
     delivery: text("delivery"),
+    // Health: outcome of the most recent poll attempt (incl. skips/errors), so
+    // the UI can show Working / Skipped: reason / Failing: reason.
+    last_status: text("last_status"),
+    last_error: text("last_error"),
+    last_evaluated_at: timestamp("last_evaluated_at", {
+      withTimezone: true,
+      mode: "string",
+    }),
   },
   (table) => [
     index("idx_event_monitors_enabled")
@@ -344,6 +352,14 @@ export const sourceLimits = pgTable(
     time_column: text("time_column"),
     poll_watermark: text("poll_watermark"),
     last_polled_at: timestamp("last_polled_at", {
+      withTimezone: true,
+      mode: "string",
+    }),
+    // Health: outcome of the most recent poll attempt (incl. skips/errors), so
+    // the UI can show Working / Skipped: reason / Failing: reason.
+    last_status: text("last_status"),
+    last_error: text("last_error"),
+    last_evaluated_at: timestamp("last_evaluated_at", {
       withTimezone: true,
       mode: "string",
     }),

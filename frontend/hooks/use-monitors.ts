@@ -38,7 +38,15 @@ export interface Monitor {
   type: "threshold" | "event" | "both" | "offline";
   /** Connection monitor missing its table/time-column pin — the poller skips it. */
   unpinned?: boolean;
+  /** Most recent poll outcome; null for offline monitors (tracked elsewhere). */
+  health?: MonitorHealth | null;
   created_at: string;
+}
+
+export interface MonitorHealth {
+  state: "working" | "skipped" | "failing" | "pending";
+  reason: string | null;
+  checked_at: string | null;
 }
 
 /**

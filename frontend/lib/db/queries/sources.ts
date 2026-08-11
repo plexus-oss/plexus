@@ -453,6 +453,9 @@ export const sourceLimitQueries = {
       last_polled_at?: string;
       table_name?: string | null;
       time_column?: string | null;
+      last_status?: string | null;
+      last_error?: string | null;
+      last_evaluated_at?: string;
     },
   ): Promise<void> => {
     await db
@@ -1000,6 +1003,9 @@ export const eventMonitorQueries = {
       last_polled_at?: string;
       table_name?: string | null;
       time_column?: string | null;
+      last_status?: string | null;
+      last_error?: string | null;
+      last_evaluated_at?: string;
     },
   ): Promise<void> => {
     await db

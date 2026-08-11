@@ -155,11 +155,50 @@ function updatePollState(
     last_polled_at?: string;
     table_name?: string | null;
     time_column?: string | null;
+    last_status?: string | null;
+    last_error?: string | null;
+    last_evaluated_at?: string;
   },
 ): Promise<void> {
   return unit.kind === "event"
     ? eventMonitorQueries.updatePollState(orgId, unit.row.id, data)
     : sourceLimitQueries.updatePollState(orgId, unit.row.id, data);
+}
+
+/**
+ * Record the outcome of a poll attempt so the UI can show Working / Skipped /
+ * Failing. Health writes must never throw into the scan — a monitor that can't
+ * even record its own skip shouldn't take down the whole source's batch.
+ */
+async function recordHealth(
+  unit: PollUnit,
+  orgId: string,
+  status: "ok" | "skipped" | "error",
+  error: string | null,
+  nowIso: string,
+): Promise<void> {
+  try {
+    await updatePollState(unit, orgId, {
+      last_status: status,
+      last_error: error,
+      last_evaluated_at: nowIso,
+    });
+  } catch (err) {
+    console.error("[detect-poll] health write failed:", unitId(unit), err);
+  }
+}
+
+/** Record the same skip reason for every unit in a group-level skip. */
+async function recordGroupSkip(
+  group: UnitWithSource[],
+  reason: string,
+): Promise<void> {
+  const nowIso = new Date().toISOString();
+  await Promise.all(
+    group.map((item) =>
+      recordHealth(item.unit, item.unit.row.org_id, "skipped", reason, nowIso),
+    ),
+  );
 }
 
 /** One full scan across all orgs. Exported for the loop and the manual route. */
@@ -320,11 +359,19 @@ export async function detectPollOnce(): Promise<PollStats> {
         await pollDeviceEventMonitor(item.row, item.source, stats);
       } catch (err) {
         stats.errors++;
+        const message = err instanceof Error ? err.message : String(err);
         console.error(
           "[detect-poll] device monitor failed:",
           item.row.id,
-          err instanceof Error ? err.message : err,
+          message,
         );
+        await eventMonitorQueries
+          .updatePollState(item.row.org_id, item.row.id, {
+            last_status: "error",
+            last_error: message,
+            last_evaluated_at: new Date().toISOString(),
+          })
+          .catch(() => {});
       }
     });
     stats.sourcesPolled += deviceSources.size;
@@ -346,19 +393,24 @@ async function pollConnectionSource(
   const connectionType = source.connection_type;
   if (!isPollDialect(connectionType ?? null)) {
     stats.skipped += group.length;
-    logSkip(source.id, unitId(group[0].unit), [
-      `unsupported connection_type '${connectionType}' for polling`,
-    ]);
+    const reason = `Source type '${connectionType}' can't be polled for alerts`;
+    logSkip(source.id, unitId(group[0].unit), [reason]);
+    await recordGroupSkip(group, reason);
     return;
   }
   if (!source.credentials_encrypted) {
     stats.skipped += group.length;
+    await recordGroupSkip(group, "Source has no stored connection credentials");
     return;
   }
 
   const circuitError = checkCircuit(source.id);
   if (circuitError) {
     stats.skipped += group.length;
+    await recordGroupSkip(
+      group,
+      "Paused after repeated connection failures — retrying automatically",
+    );
     return;
   }
 
@@ -410,9 +462,11 @@ async function pollConnectionSource(
         snapshot,
         entity?.association ?? null,
       );
+      const nowIso = new Date().toISOString();
       if (!resolved.ok) {
         stats.skipped++;
         logSkip(source.id, monitor.id, [resolved.reason]);
+        await recordHealth(unit, monitor.org_id, "skipped", resolved.reason, nowIso);
         continue;
       }
 
@@ -421,7 +475,6 @@ async function pollConnectionSource(
       }
 
       const { target } = resolved;
-      const nowIso = new Date().toISOString();
 
       // User-authored row predicate — event monitors only.
       const filters =
@@ -445,6 +498,9 @@ async function pollConnectionSource(
         await updatePollState(unit, monitor.org_id, {
           poll_watermark: String(wm),
           last_polled_at: nowIso,
+          last_status: "ok",
+          last_error: null,
+          last_evaluated_at: nowIso,
         });
         stats.initialized++;
         continue;
@@ -471,6 +527,9 @@ async function pollConnectionSource(
       if (result.rows.length === 0) {
         await updatePollState(unit, monitor.org_id, {
           last_polled_at: nowIso,
+          last_status: "ok",
+          last_error: null,
+          last_evaluated_at: nowIso,
         });
         continue;
       }
@@ -492,14 +551,21 @@ async function pollConnectionSource(
       await updatePollState(unit, monitor.org_id, {
         poll_watermark: newWatermark,
         last_polled_at: nowIso,
+        last_status: "ok",
+        last_error: null,
+        last_evaluated_at: nowIso,
       });
     } catch (err) {
       stats.errors++;
       recordFailure(source.id);
-      console.error(
-        "[detect-poll] monitor failed:",
-        monitor.id,
-        err instanceof Error ? err.message : err,
+      const message = err instanceof Error ? err.message : String(err);
+      console.error("[detect-poll] monitor failed:", monitor.id, message);
+      await recordHealth(
+        unit,
+        monitor.org_id,
+        "error",
+        message,
+        new Date().toISOString(),
       );
     }
   }
@@ -784,12 +850,17 @@ async function pollDeviceEventMonitor(
   source: Source,
   stats: PollStats,
 ): Promise<void> {
+  const nowIso = new Date().toISOString();
   if (!process.env.PLEXUS_CLICKHOUSE_URL) {
     stats.skipped++;
+    await eventMonitorQueries.updatePollState(monitor.org_id, monitor.id, {
+      last_status: "skipped",
+      last_error: "Telemetry store not configured for this deployment",
+      last_evaluated_at: nowIso,
+    });
     return;
   }
   const client = getClient();
-  const nowIso = new Date().toISOString();
   const params = {
     org: monitor.org_id,
     sid: source.slug,
@@ -811,6 +882,9 @@ async function pollDeviceEventMonitor(
     await eventMonitorQueries.updatePollState(monitor.org_id, monitor.id, {
       poll_watermark: row.plexus_wm,
       last_polled_at: nowIso,
+      last_status: "ok",
+      last_error: null,
+      last_evaluated_at: nowIso,
     });
     stats.initialized++;
     return;
@@ -833,6 +907,9 @@ async function pollDeviceEventMonitor(
   if (rows.length === 0) {
     await eventMonitorQueries.updatePollState(monitor.org_id, monitor.id, {
       last_polled_at: nowIso,
+      last_status: "ok",
+      last_error: null,
+      last_evaluated_at: nowIso,
     });
     return;
   }
@@ -849,6 +926,9 @@ async function pollDeviceEventMonitor(
   await eventMonitorQueries.updatePollState(monitor.org_id, monitor.id, {
     poll_watermark: String(rows[rows.length - 1].plexus_ts),
     last_polled_at: nowIso,
+    last_status: "ok",
+    last_error: null,
+    last_evaluated_at: nowIso,
   });
 }
 

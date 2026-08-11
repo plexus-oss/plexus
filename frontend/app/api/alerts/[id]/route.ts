@@ -43,12 +43,14 @@ export const GET = withDualAuth(async (_request, { orgId, isApiKeyAuth, params }
     ? await adminAlertEventQueries.findByAlert(orgId, id)
     : await alertEventQueries.findByAlert(orgId, id);
 
-  // Live (recency-windowed) verdict history for this alert's rule/limit on its
-  // source — powers the "this rule has been noise N of M times here" nudge.
+  // Live (recency-windowed) verdict history for this alert's monitor on its
+  // source — powers the "this monitor has been noise N of M times here" nudge.
+  // Event alerts carry no rule/limit id, so they key on trigger_type + metric.
   const by = {
     ruleId: alert.rule_id,
     limitId: alert.limit_id,
     sourceId: alert.source_id,
+    eventMetric: alert.trigger_type === "event" ? alert.metric : null,
   };
   const verdict_stats = isApiKeyAuth
     ? await adminAlertQueries.getVerdictStats(orgId, by)

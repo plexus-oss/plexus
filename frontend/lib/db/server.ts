@@ -1878,10 +1878,13 @@ export const adminAlertQueries = {
       ruleId?: string | null;
       limitId?: string | null;
       sourceId?: string | null;
+      eventMetric?: string | null;
     },
   ): Promise<VerdictStats> => {
     const empty: VerdictStats = { helpful: 0, noise: 0, total: 0 };
-    if (!by.ruleId && !by.limitId) return empty;
+    const isEvent = !by.ruleId && !by.limitId && !!by.eventMetric;
+    if (!by.ruleId && !by.limitId && !isEvent) return empty;
+    if (isEvent && !by.sourceId) return empty;
     const since = new Date(
       Date.now() - VERDICT_WINDOW_DAYS * 86_400_000,
     ).toISOString();
@@ -1891,7 +1894,12 @@ export const adminAlertQueries = {
       gte(alerts.triggered_at, since),
       by.ruleId
         ? eq(alerts.rule_id, by.ruleId)
-        : eq(alerts.limit_id, by.limitId as string),
+        : by.limitId
+          ? eq(alerts.limit_id, by.limitId)
+          : and(
+              eq(alerts.trigger_type, "event"),
+              eq(alerts.metric, by.eventMetric as string),
+            )!,
     ];
     if (by.sourceId) filters.push(eq(alerts.source_id, by.sourceId));
 

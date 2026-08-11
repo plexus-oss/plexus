@@ -36,7 +36,8 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { useMonitors, monitorTargets } from "@/hooks/use-monitors";
-import type { Monitor } from "@/hooks/use-monitors";
+import type { Monitor, MonitorHealth } from "@/hooks/use-monitors";
+import { CheckCircle2, MinusCircle } from "lucide-react";
 import { CreateMonitorDialog } from "@/components/monitors/create-monitor-dialog";
 import {
   useNotificationTargetOptions,
@@ -44,7 +45,6 @@ import {
   type NotificationTargetOption,
 } from "@/components/monitors/notification-target-picker";
 import { toast } from "@/lib/toast-utils";
-import { SuggestedMonitorsSection } from "@/components/monitors/suggested-monitors-section";
 import { formatDistanceToNow } from "date-fns";
 import { ACTION_NEW_MONITOR } from "@/lib/shortcuts";
 import { useHotkeys } from "@/hooks/use-hotkeys";
@@ -93,6 +93,66 @@ type FilterType = "all" | "threshold" | "event" | "both";
  */
 const monitorKey = (m: Monitor) =>
   m.offline ? `offline:${m.offline.id}` : `${m.source_id}::${m.metric}`;
+
+const HEALTH_STYLES: Record<
+  NonNullable<MonitorHealth>["state"],
+  { label: string; className: string; Icon: typeof CheckCircle2 }
+> = {
+  working: {
+    label: "Working",
+    className: "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400",
+    Icon: CheckCircle2,
+  },
+  skipped: {
+    label: "Skipped",
+    className: "bg-amber-500/15 text-amber-600 dark:text-amber-400",
+    Icon: AlertTriangle,
+  },
+  failing: {
+    label: "Failing",
+    className: "bg-red-500/15 text-red-600 dark:text-red-400",
+    Icon: AlertTriangle,
+  },
+  pending: {
+    label: "Pending",
+    className: "bg-muted text-muted-foreground",
+    Icon: MinusCircle,
+  },
+};
+
+/** Status pill for a monitor's most recent poll outcome (null → nothing). */
+function HealthBadge({
+  health,
+  className,
+}: {
+  health: MonitorHealth | null | undefined;
+  className?: string;
+}) {
+  if (!health) return null;
+  const { label, className: tone, Icon } = HEALTH_STYLES[health.state];
+  const title =
+    health.reason ??
+    (health.state === "working"
+      ? health.checked_at
+        ? `Last scan ${formatDistanceToNow(new Date(health.checked_at), { addSuffix: true })}`
+        : "Scanning normally"
+      : health.state === "pending"
+        ? "Waiting for the first scan"
+        : label);
+  return (
+    <span
+      title={title}
+      className={cn(
+        "inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[10px] font-medium",
+        tone,
+        className,
+      )}
+    >
+      <Icon className="h-2.5 w-2.5" />
+      {label}
+    </span>
+  );
+}
 
 export default function MonitorsPage() {
   const { monitors, isLoading, error, mutate, deleteMonitor, updateMonitorTargets } =
@@ -185,8 +245,6 @@ export default function MonitorsPage() {
     <>
       <div className="flex flex-col h-full">
         <div className="flex-1 flex flex-col overflow-hidden p-2">
-          <SuggestedMonitorsSection />
-
           {/* Filter Bar */}
           <div className="flex items-center justify-between gap-2 mb-2">
             <div className="flex items-center gap-2 flex-wrap">
@@ -295,6 +353,9 @@ export default function MonitorsPage() {
                           Condition
                         </TableHead>
                         <TableHead className="text-left text-[10px] font-medium text-muted-foreground uppercase tracking-wider px-3 py-2">
+                          Status
+                        </TableHead>
+                        <TableHead className="text-left text-[10px] font-medium text-muted-foreground uppercase tracking-wider px-3 py-2">
                           Notify
                         </TableHead>
                         <TableHead className="text-left text-[10px] font-medium text-muted-foreground uppercase tracking-wider px-3 py-2">
@@ -349,15 +410,6 @@ export default function MonitorsPage() {
                                       ? "Stream stopped"
                                       : "Both"}
                               </span>
-                              {monitor.unpinned && (
-                                <span
-                                  title="Not scanning — the metric column isn't pinned to a table. Delete this monitor and recreate it by picking the metric from the list."
-                                  className="ml-1.5 inline-flex items-center gap-1 rounded-full bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-medium text-amber-600 dark:text-amber-400"
-                                >
-                                  <AlertTriangle className="h-2.5 w-2.5" />
-                                  Not scanning
-                                </span>
-                              )}
                             </TableCell>
 
                             {/* Source */}
@@ -435,6 +487,17 @@ export default function MonitorsPage() {
                                   !monitor.offline &&
                                   "—"}
                               </div>
+                            </TableCell>
+
+                            {/* Status — poll health */}
+                            <TableCell className="px-3 py-2.5">
+                              {monitor.offline ? (
+                                <span className="text-[10px] text-muted-foreground">
+                                  —
+                                </span>
+                              ) : (
+                                <HealthBadge health={monitor.health} />
+                              )}
                             </TableCell>
 
                             {/* Notify — silent for default fan-out */}
@@ -627,6 +690,36 @@ function MonitorDetailPanel({
 
         {/* Content */}
         <div className="flex-1 overflow-y-auto p-4 space-y-4">
+          {/* Health */}
+          {monitor.health && (
+            <div className="space-y-2">
+              <span className="text-[10px] text-muted-foreground uppercase tracking-wider">
+                Status
+              </span>
+              <div className="flex items-center gap-2">
+                <HealthBadge health={monitor.health} />
+                {monitor.health.checked_at && (
+                  <span className="text-[10px] text-muted-foreground">
+                    checked{" "}
+                    {formatDistanceToNow(new Date(monitor.health.checked_at), {
+                      addSuffix: true,
+                    })}
+                  </span>
+                )}
+              </div>
+              {monitor.health.reason && (
+                <p className="text-xs text-muted-foreground">
+                  {monitor.health.reason}
+                </p>
+              )}
+              {monitor.health.state === "pending" && (
+                <p className="text-xs text-muted-foreground">
+                  Waiting for the first scan — this can take up to a minute.
+                </p>
+              )}
+            </div>
+          )}
+
           {/* Threshold Details */}
           {monitor.threshold && (
             <div className="space-y-2">
