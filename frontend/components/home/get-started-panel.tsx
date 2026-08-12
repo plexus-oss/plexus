@@ -12,9 +12,9 @@
  * reload to find out whether it worked.
  */
 
-import { useState } from "react";
+import { useState, useCallback } from "react";
 import Link from "next/link";
-import { Cpu, Server, Database, type LucideIcon } from "lucide-react";
+import { Cpu, Server, Database, KeyRound, type LucideIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { CodeBlock } from "@/components/connect/code-block";
 import { HardwareTabs } from "@/components/connect/hardware-tabs";
@@ -30,6 +30,36 @@ const ALTERNATES: { id: Exclude<Path, "hardware">; icon: LucideIcon; label: stri
 
 export function GetStartedPanel() {
   const [path, setPath] = useState<Path>("hardware");
+  const [apiKey, setApiKey] = useState("");
+  const [keyError, setKeyError] = useState<string | null>(null);
+  const [generating, setGenerating] = useState(false);
+
+  // Mint a real key inline so the snippet above is runnable as-is — the
+  // placeholder-plus-go-to-another-page version couldn't be copy-pasted.
+  const generateKey = useCallback(async () => {
+    setGenerating(true);
+    setKeyError(null);
+    try {
+      const res = await fetch("/api/api-keys", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: "first-device", scopes: ["write"] }),
+      });
+      const body = (await res.json().catch(() => ({}))) as {
+        key?: { secret?: string };
+        error?: string;
+      };
+      if (!res.ok || !body.key?.secret) {
+        setKeyError(body.error || "Couldn't create a key — try the API Keys page.");
+        return;
+      }
+      setApiKey(body.key.secret);
+    } catch {
+      setKeyError("Couldn't create a key — try the API Keys page.");
+    } finally {
+      setGenerating(false);
+    }
+  }, []);
 
   // Poll while empty. HomePage reads the same SWR key, so the moment a source
   // exists this screen is replaced by the fleet view without a reload.
@@ -40,8 +70,8 @@ export function GetStartedPanel() {
       <div className="space-y-1.5">
         <h2 className="text-sm font-medium">Get your first reading in</h2>
         <p className="text-xs text-muted-foreground leading-relaxed">
-          Everything else builds on this. As soon as a reading lands, your
-          fleet view appears here and a starter dashboard is ready.
+          Everything else builds on this. The moment your first reading lands,
+          we build your starter dashboard and open it.
         </p>
       </div>
 
@@ -58,13 +88,46 @@ export function GetStartedPanel() {
               Drop this into your device code. Readings appear under your
               source id.
             </p>
-            <HardwareTabs apiKey="" sourceId="" />
-            <Link
-              href="/api"
-              className="inline-block text-[11px] text-muted-foreground underline underline-offset-2 hover:text-foreground transition-colors"
-            >
-              Create an API key
-            </Link>
+            <HardwareTabs apiKey={apiKey} sourceId="" />
+            {!apiKey ? (
+              <div className="space-y-1.5">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="h-7 text-[11px]"
+                  onClick={generateKey}
+                  disabled={generating}
+                >
+                  <KeyRound className="h-3 w-3 mr-1.5" />
+                  {generating
+                    ? "Generating…"
+                    : "Generate an API key for this snippet"}
+                </Button>
+                {keyError && (
+                  <p className="text-[11px] text-muted-foreground">
+                    {keyError}{" "}
+                    <Link
+                      href="/api"
+                      className="underline underline-offset-2 hover:text-foreground transition-colors"
+                    >
+                      API Keys
+                    </Link>
+                  </p>
+                )}
+              </div>
+            ) : (
+              <p className="text-[11px] text-muted-foreground">
+                Your key is in the snippet above — it&apos;s shown this once,
+                so copy the snippet now. Manage keys in{" "}
+                <Link
+                  href="/api"
+                  className="underline underline-offset-2 hover:text-foreground transition-colors"
+                >
+                  API Keys
+                </Link>
+                .
+              </p>
+            )}
           </>
         )}
 

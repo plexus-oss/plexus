@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { Circle, AlertTriangle, Activity, HeartPulse } from "lucide-react";
 import { Sparkline } from "@/components/ui/sparkline";
 import { useSources } from "@/hooks/use-sources";
@@ -15,6 +16,7 @@ interface StatusCardProps {
   sparklineData?: number[];
   trend?: "up" | "down" | "flat";
   alert?: boolean;
+  href: string;
 }
 
 function StatusCard({
@@ -25,11 +27,14 @@ function StatusCard({
   sparklineData,
   trend,
   alert,
+  href,
 }: StatusCardProps) {
   return (
-    <div
+    <Link
+      href={href}
       className={cn(
-        "p-3 rounded-lg border border-border/50 bg-muted/20 space-y-2 relative overflow-hidden",
+        "block p-3 rounded-lg border border-border/50 bg-muted/20 space-y-2 relative overflow-hidden",
+        "hover:border-border hover:bg-muted/40 transition-colors",
         alert && "border-red-500/30",
       )}
     >
@@ -49,7 +54,7 @@ function StatusCard({
         <span className="text-xl font-semibold tabular-nums">{value}</span>
         {detail}
       </div>
-    </div>
+    </Link>
   );
 }
 
@@ -86,6 +91,7 @@ export function FleetStatusGrid() {
         icon={<Circle className="h-3.5 w-3.5" />}
         label="Devices"
         value={totalDevices}
+        href="/devices"
         detail={
           <div className="flex items-center gap-2 text-[10px] text-muted-foreground">
             {onlineCount > 0 && (
@@ -107,6 +113,7 @@ export function FleetStatusGrid() {
         icon={<AlertTriangle className="h-3.5 w-3.5" />}
         label="Alerts"
         value={alerts.length}
+        href="/alerts"
         alert={hasCritical}
         detail={
           alerts.length > 0 ? (
@@ -127,6 +134,7 @@ export function FleetStatusGrid() {
         icon={<Activity className="h-3.5 w-3.5" />}
         label="Throughput"
         value={summary.totalPoints.toLocaleString()}
+        href="/data"
         detail={
           <span className="text-[10px] text-muted-foreground">points</span>
         }
@@ -135,6 +143,7 @@ export function FleetStatusGrid() {
         icon={<HeartPulse className="h-3.5 w-3.5" />}
         label="Data Health"
         value={`${dataHealth}%`}
+        href="/devices"
         detail={
           <span className="text-[10px] text-muted-foreground">
             {reportingDevices}/{totalDevices} reporting

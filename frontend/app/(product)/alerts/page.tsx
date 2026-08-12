@@ -226,7 +226,15 @@ export default function AlertsPage() {
                       ? "No alerts match your search"
                       : activeTab !== "all"
                         ? `No ${activeTab} alerts`
-                        : "Alerts will appear when anomalies are detected"
+                        : "Alerts fire when a monitor's condition is met — create a monitor to start watching your sources."
+                  }
+                  action={
+                    !search && activeTab === "all"
+                      ? {
+                          label: "Create a monitor",
+                          onClick: () => router.push("/alerts/monitors"),
+                        }
+                      : undefined
                   }
                   className="h-full"
                 />

@@ -116,7 +116,8 @@ export default function DeviceDetailPage({ params }: PageProps) {
     };
   }, [primaryAssociation]);
 
-  const [activeTab, setActiveTab] = useState<DeviceTabType>("overview");
+  // Live first: a device page's job is the telemetry, not the rename form.
+  const [activeTab, setActiveTab] = useState<DeviceTabType>("live");
   const [metricsToSubscribe, setMetricsToSubscribe] = useState<string[]>([]);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [showMetadata, setShowMetadata] = useState(false);
@@ -535,9 +536,12 @@ export default function DeviceDetailPage({ params }: PageProps) {
   }
 
   const isPassiveDevice = source.device_type === "satellite";
+  // Passive devices have no Live tab — fall back to Overview.
+  const effectiveTab =
+    isPassiveDevice && activeTab === "live" ? "overview" : activeTab;
 
+  // Live leads — the telemetry is the page's job; settings are a tab.
   const tabs = [
-    { id: "overview", label: "Overview" },
     ...(!isPassiveDevice
       ? [
           { id: "live", label: "Live" },
@@ -545,6 +549,7 @@ export default function DeviceDetailPage({ params }: PageProps) {
         ]
       : []),
     ...(hasAssociation ? [{ id: "data", label: "Data" }] : []),
+    { id: "overview", label: "Overview" },
   ];
 
   return (
@@ -567,13 +572,13 @@ export default function DeviceDetailPage({ params }: PageProps) {
       <div className="flex flex-col h-full">
         <TabNav
           tabs={tabs}
-          activeTab={activeTab}
+          activeTab={effectiveTab}
           onTabChange={(id) => setActiveTab(id as DeviceTabType)}
         />
 
         <div className="flex-1 overflow-auto">
           {/* OVERVIEW TAB */}
-          {activeTab === "overview" && (
+          {effectiveTab === "overview" && (
             <div className="p-6 max-w-3xl mx-auto">
               {/* Header */}
               <div className="mb-8">
@@ -845,7 +850,7 @@ export default function DeviceDetailPage({ params }: PageProps) {
             </div>
           )}
 
-          {activeTab === "live" && (
+          {effectiveTab === "live" && (
             <div className="p-6 space-y-8">
               {/* Slim status row — the grid below is the content, not the connection */}
               <div className="flex items-center justify-between">
@@ -964,7 +969,7 @@ export default function DeviceDetailPage({ params }: PageProps) {
           )}
 
           {/* RECORDINGS TAB */}
-          {activeTab === "recordings" && (
+          {effectiveTab === "recordings" && (
             <div className="h-full">
               <DeviceRecordings sourceId={source.id} />
             </div>
@@ -972,7 +977,7 @@ export default function DeviceDetailPage({ params }: PageProps) {
 
           {/* DATA TAB — discovered sources: the connection-table slice
               feeding this entity, explored via the parent connection. */}
-          {activeTab === "data" && primaryAssociation && (
+          {effectiveTab === "data" && primaryAssociation && (
             <div className="h-full">
               {assocConnection ? (
                 <UnifiedDataTab

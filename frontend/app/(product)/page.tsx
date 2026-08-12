@@ -1,6 +1,8 @@
 "use client";
 
+import { useEffect, useRef } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { LayoutDashboard } from "lucide-react";
 import { motion } from "framer-motion";
 import { usePlexusSession } from "@/hooks/use-plexus-session";
@@ -36,9 +38,66 @@ function FadeUp({
 
 export default function HomePage() {
   const { firstName: userFirstName } = usePlexusSession();
-  const { dashboards } = useDashboards();
+  const { dashboards, isLoading: dashboardsLoading } = useDashboards();
   const { sources, isLoading: sourcesLoading } = useSources();
   const { usage, refresh: refreshUsage } = useUsage();
+  const router = useRouter();
+
+  // ── First-data magic ──────────────────────────────────────────────────
+  // The get-started panel promises "we build your starter dashboard and
+  // open it". Keep that promise: when the org transitions empty → first
+  // source while the user watches, and no dashboard exists yet, build the
+  // quick-start dashboard and land them on it. The loader enables brand-new
+  // sources ~15s after first sighting, so 422s ("no metrics yet") retry.
+  const sawEmptyRef = useRef(false);
+  const startedRef = useRef(false);
+  const unmountedRef = useRef(false);
+  useEffect(() => {
+    return () => {
+      unmountedRef.current = true;
+    };
+  }, []);
+  useEffect(() => {
+    if (sourcesLoading || dashboardsLoading) return;
+    if (sources.length === 0) {
+      sawEmptyRef.current = true;
+      return;
+    }
+    if (!sawEmptyRef.current || startedRef.current) return;
+    if (dashboards.length > 0) return;
+    startedRef.current = true;
+
+    const newest = [...sources].sort((a, b) =>
+      (b.last_seen_at ?? "").localeCompare(a.last_seen_at ?? ""),
+    )[0];
+    if (!newest?.slug) return;
+
+    let attempts = 0;
+    const tryCreate = async () => {
+      if (unmountedRef.current) return;
+      attempts += 1;
+      try {
+        const res = await fetch("/api/dashboards/quick-start", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ sourceId: newest.slug }),
+        });
+        if (res.ok) {
+          const body = (await res.json()) as { dashboard?: { id: string } };
+          if (body.dashboard && !unmountedRef.current) {
+            router.push(`/dashboards/${body.dashboard.id}`);
+          }
+          return;
+        }
+        // Anything but "no metrics yet" won't heal by retrying.
+        if (res.status !== 422) return;
+      } catch {
+        // Network hiccup — retry below.
+      }
+      if (!unmountedRef.current && attempts < 8) setTimeout(tryCreate, 5000);
+    };
+    void tryCreate();
+  }, [sources, sourcesLoading, dashboards, dashboardsLoading, router]);
 
   const billing = usage?.billing;
   const needsCard = billing?.tier === "tier_1" && billing.isPaid === false;

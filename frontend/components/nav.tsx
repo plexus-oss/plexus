@@ -42,6 +42,27 @@ import {
 } from "@/lib/features";
 import { useFeatures } from "@/hooks/use-features";
 import { useTier } from "@/hooks/use-tier";
+import { useAlerts } from "@/hooks/use-alerts";
+
+/**
+ * Open-alert count on the sidebar Alerts link — the primary nav must not be
+ * silent during an incident. Same SWR key as the bell dropdown, so this adds
+ * no extra polling.
+ */
+function NavAlertBadge() {
+  const { counts } = useAlerts({
+    status: ["open"],
+    limit: 5,
+    refreshInterval: 30_000,
+  });
+  const open = counts.open || 0;
+  if (open === 0) return null;
+  return (
+    <span className="ml-auto rounded bg-red-500/15 px-1.5 py-px text-[10px] font-medium tabular-nums text-red-500">
+      {open > 99 ? "99+" : open}
+    </span>
+  );
+}
 import { useFormattedTime } from "@/hooks/use-formatted-time";
 import { Spinner } from "@/components/ui/spinner";
 import { DashboardIcon } from "@/components/dashboard/icon-picker";
@@ -694,6 +715,7 @@ function SidebarSection({
             } ${!isSignedIn ? "opacity-60" : ""}`}
           >
             {link.label}
+            {link.href === "/alerts" && <NavAlertBadge />}
           </NavItem>
         );
       })}
