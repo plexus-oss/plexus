@@ -62,14 +62,6 @@ import { useAvailableMetrics } from "@/hooks/use-telemetry";
 import { useRole } from "@/hooks/use-role";
 import { DeviceModeBadge } from "@/components/device/device-mode-badge";
 import type { LinkedConnection } from "@/lib/db/types";
-import { MonitorSuggestionBanner } from "@/components/monitors/monitor-suggestion-banner";
-import { MonitorSuggestionCard } from "@/components/monitors/monitor-suggestion-card";
-import { useMonitorSuggestions } from "@/hooks/use-monitor-suggestions";
-import { useMonitors } from "@/hooks/use-monitors";
-import {
-  CreateMonitorDialog,
-  type MonitorPrefill,
-} from "@/components/monitors/create-monitor-dialog";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -129,13 +121,8 @@ export default function DeviceDetailPage({ params }: PageProps) {
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [showMetadata, setShowMetadata] = useState(false);
   const [showImportSheet, setShowImportSheet] = useState(false);
-  const [monitorPrefill, setMonitorPrefill] = useState<
-    MonitorPrefill | undefined
-  >();
-  const [showCreateMonitor, setShowCreateMonitor] = useState(false);
   const { metricsBySource } = useAvailableMetrics();
   const { canEdit } = useRole();
-  const { monitors } = useMonitors();
 
   // Get recording preference from source config
   const sourceConfig = source?.config as Record<string, unknown> | null;
@@ -819,28 +806,6 @@ export default function DeviceDetailPage({ params }: PageProps) {
               {/* <div className="mt-8">
                 <ContextTab sourceId={source.id} />
               </div> */}
-
-              <div className="mt-8">
-                <MonitorSuggestionBanner sourceId={source.id} />
-              </div>
-
-              {(() => {
-                const existingMonitorMetrics = monitors
-                  .filter((m) => m.source_id === source.id)
-                  .map((m) => m.metric);
-                if (
-                  deviceMetrics.length === 0 ||
-                  existingMonitorMetrics.length >= deviceMetrics.length
-                )
-                  return null;
-              })()}
-
-              <CreateMonitorDialog
-                open={showCreateMonitor}
-                onOpenChange={setShowCreateMonitor}
-                onCreated={() => setShowCreateMonitor(false)}
-                prefill={monitorPrefill}
-              />
 
               {canEdit && (
                 <div className="mt-12 pt-8 border-t border-border">
