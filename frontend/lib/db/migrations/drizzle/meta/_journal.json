@@ -225,6 +225,20 @@
       "when": 1786555713729,
       "tag": "0031_great_mordo",
       "breakpoints": true
+    },
+    {
+      "idx": 32,
+      "version": "7",
+      "when": 1786573181106,
+      "tag": "0032_alert_silence",
+      "breakpoints": true
+    },
+    {
+      "idx": 33,
+      "version": "7",
+      "when": 1786573222192,
+      "tag": "0033_alert_silence",
+      "breakpoints": true
     }
   ]
 }

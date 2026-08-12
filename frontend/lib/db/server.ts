@@ -830,6 +830,29 @@ export const adminSourceQueries = {
 // =============================================================================
 
 export const adminSourceLimitQueries = {
+  /** Wall-clock silence mirror for the threshold double-write (UUID + metric). */
+  setSilencedUntil: async (
+    orgId: string,
+    sourceId: string,
+    metric: string,
+    silencedUntil: string | null,
+  ): Promise<number> => {
+    const updated = await db
+      .update(sourceLimits)
+      .set({ silenced_until: silencedUntil } as Partial<
+        typeof sourceLimits.$inferInsert
+      >)
+      .where(
+        and(
+          eq(sourceLimits.org_id, orgId),
+          eq(sourceLimits.source_id, sourceId),
+          eq(sourceLimits.metric, metric),
+        ),
+      )
+      .returning({ id: sourceLimits.id });
+    return updated.length;
+  },
+
   /**
    * Find all source_limits rows across all orgs with the source slug resolved
    * via inner JOIN. Used by the gateway bootstrap endpoint to hydrate its
@@ -1100,6 +1123,29 @@ export const adminEventMonitorQueries = {
     return updated.length;
   },
 
+  /** Wall-clock silence for an event monitor (by source UUID + metric). */
+  setSilencedUntil: async (
+    orgId: string,
+    sourceId: string,
+    metric: string,
+    silencedUntil: string | null,
+  ): Promise<number> => {
+    const updated = await db
+      .update(eventMonitors)
+      .set({ silenced_until: silencedUntil } as Partial<
+        typeof eventMonitors.$inferInsert
+      >)
+      .where(
+        and(
+          eq(eventMonitors.org_id, orgId),
+          eq(eventMonitors.source_id, sourceId),
+          eq(eventMonitors.metric, metric),
+        ),
+      )
+      .returning({ id: eventMonitors.id });
+    return updated.length;
+  },
+
   /**
    * Admin (no RLS) list. Matches the shape returned by
    * `eventMonitorQueries.findByOrg` so the monitors route handler can
@@ -1323,6 +1369,31 @@ export const adminAlertRuleQueries = {
    * Set notification targets on the threshold rule for (slug, metric).
    * Returns rows updated (0 when no threshold rule exists).
    */
+  /** Wall-clock silence for threshold rules keyed by slug (mirror of the
+   *  source_limits setter — the two tables are double-written). */
+  setThresholdSilencedUntil: async (
+    orgId: string,
+    sourceSlug: string,
+    metric: string,
+    silencedUntil: string | null,
+  ): Promise<number> => {
+    const updated = await db
+      .update(alertRules)
+      .set({ silenced_until: silencedUntil } as Partial<
+        typeof alertRules.$inferInsert
+      >)
+      .where(
+        and(
+          eq(alertRules.org_id, orgId),
+          eq(alertRules.source_id, sourceSlug),
+          eq(alertRules.metric, metric),
+          eq(alertRules.type, "threshold"),
+        ),
+      )
+      .returning({ id: alertRules.id });
+    return updated.length;
+  },
+
   setThresholdTargets: async (
     orgId: string,
     sourceSlug: string,
@@ -1370,6 +1441,32 @@ export const adminAlertRuleQueries = {
       .set({
         notification_target_ids: notificationTargetIds,
       } as Partial<typeof alertRules.$inferInsert>)
+      .where(and(eq(alertRules.org_id, orgId), eq(alertRules.id, id)))
+      .returning({ id: alertRules.id });
+    return updated.length;
+  },
+
+  findByIdForOrg: async (orgId: string, id: string) => {
+    const rows = await db
+      .select()
+      .from(alertRules)
+      .where(and(eq(alertRules.org_id, orgId), eq(alertRules.id, id)))
+      .limit(1);
+    return rows[0] ?? null;
+  },
+
+  /** Wall-clock silence: null clears. Mirrors onto source_limits for
+   *  threshold rules via the caller (the tables are double-written). */
+  setSilencedUntilById: async (
+    orgId: string,
+    id: string,
+    silencedUntil: string | null,
+  ): Promise<number> => {
+    const updated = await db
+      .update(alertRules)
+      .set({ silenced_until: silencedUntil } as Partial<
+        typeof alertRules.$inferInsert
+      >)
       .where(and(eq(alertRules.org_id, orgId), eq(alertRules.id, id)))
       .returning({ id: alertRules.id });
     return updated.length;

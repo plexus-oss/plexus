@@ -100,6 +100,8 @@ export type SystemEventType =
   | "alert.triggered"
   | "alert.resolved"
   | "alert.acknowledged"
+  | "alert.silenced"
+  | "device.command_sent"
   | "dashboard.created"
   | "dashboard.deleted"
   | "dashboard.duplicated"
@@ -140,6 +142,8 @@ export type WebhookEventType =
   | "alert.triggered"
   | "alert.resolved"
   | "alert.acknowledged"
+  | "alert.silenced"
+  | "device.command_sent"
   | "device.online"
   | "device.offline"
   | "threshold.warning"
@@ -1159,6 +1163,7 @@ export interface Database {
           max: number | null;
           severity: LimitSeverity;
           message: string | null;
+          silenced_until: string | null;
           table_name: string | null;
           time_column: string | null;
           poll_watermark: string | null;
@@ -1178,6 +1183,7 @@ export interface Database {
           max?: number | null;
           severity?: LimitSeverity;
           message?: string | null;
+          silenced_until?: string | null;
           table_name?: string | null;
           time_column?: string | null;
           poll_watermark?: string | null;
@@ -1197,6 +1203,7 @@ export interface Database {
           max?: number | null;
           severity?: LimitSeverity;
           message?: string | null;
+          silenced_until?: string | null;
           table_name?: string | null;
           time_column?: string | null;
           poll_watermark?: string | null;
@@ -1526,6 +1533,7 @@ export interface Database {
           sub_rules: Json | null;
           hysteresis_seconds: number | null;
           cooldown_seconds: number | null;
+          silenced_until: string | null;
           severity: string;
           enabled: boolean;
           notification_target_ids: string[] | null;
@@ -1543,6 +1551,7 @@ export interface Database {
           sub_rules?: Json | null;
           hysteresis_seconds?: number | null;
           cooldown_seconds?: number | null;
+          silenced_until?: string | null;
           severity?: string;
           enabled?: boolean;
           notification_target_ids?: string[] | null;
@@ -1560,6 +1569,7 @@ export interface Database {
           sub_rules?: Json | null;
           hysteresis_seconds?: number | null;
           cooldown_seconds?: number | null;
+          silenced_until?: string | null;
           severity?: string;
           enabled?: boolean;
           notification_target_ids?: string[] | null;
@@ -2180,6 +2190,7 @@ export interface EventMonitorRecord {
   severity: LimitSeverity;
   message: string | null;
   enabled: boolean;
+  silenced_until: string | null;
   visualization: AlertVisualization | null;
   notification_target_ids: string[] | null;
   table_name: string | null;

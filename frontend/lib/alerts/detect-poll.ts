@@ -76,6 +76,7 @@ import {
 } from "@/lib/alerts/event-poll-sql";
 import { resolvePollTarget } from "@/lib/alerts/resolve-poll-target";
 import { fireEventAlert, fireLimitAlert } from "@/lib/alerts/fire-alert";
+import { isSilenced } from "@/lib/alerts/silence";
 
 const SOURCE_CONCURRENCY = 3;
 const QUERY_TIMEOUT_MS = 10_000;
@@ -321,14 +322,26 @@ export async function detectPollOnce(): Promise<PollStats> {
     })),
   ];
 
-  stats.monitors = connectionUnits.length + deviceEvents.length;
+  // Silenced monitors are skipped whole — no evaluation, no alert, no
+  // notification — until silenced_until passes.
+  const liveConnectionUnits = connectionUnits.filter(
+    (item) =>
+      !isSilenced(
+        (item.unit.row as { silenced_until?: string | null }).silenced_until,
+      ),
+  );
+  const liveDeviceEvents = deviceEvents.filter(
+    (r) => !isSilenced(r.row.silenced_until),
+  );
+
+  stats.monitors = liveConnectionUnits.length + liveDeviceEvents.length;
   if (stats.monitors === 0) return stats;
 
   // Group by the id of the source being POLLED — for discovered entities
   // that's the parent connection, so they share creds/circuit/snapshot with
   // direct monitors on the same connection.
   const bySource = new Map<string, UnitWithSource[]>();
-  for (const item of connectionUnits) {
+  for (const item of liveConnectionUnits) {
     const group = bySource.get(item.source.id) ?? [];
     group.push(item);
     bySource.set(item.source.id, group);
@@ -352,9 +365,9 @@ export async function detectPollOnce(): Promise<PollStats> {
     },
   );
 
-  if (deviceEvents.length > 0) {
-    const deviceSources = new Set(deviceEvents.map((r) => r.source.id));
-    await processInBatches(deviceEvents, SOURCE_CONCURRENCY, async (item) => {
+  if (liveDeviceEvents.length > 0) {
+    const deviceSources = new Set(liveDeviceEvents.map((r) => r.source.id));
+    await processInBatches(liveDeviceEvents, SOURCE_CONCURRENCY, async (item) => {
       try {
         await pollDeviceEventMonitor(item.row, item.source, stats);
       } catch (err) {

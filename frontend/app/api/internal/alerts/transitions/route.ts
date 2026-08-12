@@ -21,8 +21,10 @@ import { NextRequest, NextResponse } from "next/server";
 import {
   adminAlertQueries,
   adminAlertEventQueries,
+  adminAlertRuleQueries,
   adminSourceQueries,
 } from "@/lib/db/server";
+import { isSilenced } from "@/lib/alerts/silence";
 import { runWithServiceRole } from "@/lib/db";
 import type {
   TransitionWire,
@@ -123,6 +125,19 @@ export async function POST(request: NextRequest) {
         // -----------------------------------------------------------------
         // OPEN — insert new alert row
         // -----------------------------------------------------------------
+        // Silenced rule: drop the open (and with it every downstream
+        // notification — fan-out hangs off the insert). Houston keeps its
+        // own state; `closed` transitions below still process normally.
+        if (t.rule_id) {
+          const rule = await adminAlertRuleQueries.findByIdForOrg(
+            t.org_id,
+            t.rule_id,
+          );
+          if (rule && isSilenced(rule.silenced_until)) {
+            skipped++;
+            continue;
+          }
+        }
         const contextSnapshot: Record<string, Json> = {};
         if (t.distribution)
           contextSnapshot.distribution = { ...t.distribution };

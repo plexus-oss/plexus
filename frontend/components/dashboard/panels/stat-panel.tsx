@@ -422,10 +422,14 @@ export function StatPanel({ panel, timeRange }: StatPanelProps) {
       ref={containerRef}
       className="h-full flex flex-col items-center justify-center px-4 py-3 gap-1"
     >
-      {/* Metric name */}
-      <span className="text-xs text-muted-foreground font-medium uppercase tracking-wider truncate max-w-full">
-        {metricName}
-      </span>
+      {/* Metric name — only when the panel has no title of its own; the grid
+          chrome already names titled panels, and a raw ALL-CAPS metric slug
+          above the value read as noise. */}
+      {!panel.title && (
+        <span className="text-xs text-muted-foreground font-medium uppercase tracking-wider truncate max-w-full">
+          {metricName}
+        </span>
+      )}
 
       {/* Value */}
       <div

@@ -36,7 +36,14 @@ import {
   Database,
   ThumbsUp,
   ThumbsDown,
+  BellOff,
 } from "lucide-react";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
 import { Input } from "@/components/ui/input";
@@ -797,6 +804,10 @@ interface AlertStoryPanelProps {
   sourceContext?: SourceContext[];
   onClose: () => void;
   onAction: (action: "acknowledge" | "resolve" | "reopen") => void;
+  /** Silence the OWNING monitor for N hours — no new alerts until then. */
+  onSilence?: (hours: number) => void;
+  /** Send a typed device command (rendered for device sources only). */
+  onSendCommand?: (command: string) => void;
   onAddComment?: (message: string) => Promise<boolean>;
   onResolveWithContext?: (
     notes: string,
@@ -816,6 +827,8 @@ export function AlertStoryPanel({
   sourceContext = [],
   onClose,
   onAction,
+  onSilence,
+  onSendCommand,
   onAddComment,
   onResolveWithContext,
 }: AlertStoryPanelProps) {
@@ -960,6 +973,43 @@ export function AlertStoryPanel({
               >
                 <RotateCcw className="h-3 w-3" />
                 Reopen
+              </Button>
+            )}
+            {canEdit && onSilence && (
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-7 text-xs gap-1.5"
+                  >
+                    <BellOff className="h-3 w-3" />
+                    Silence
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="start">
+                  <DropdownMenuItem onClick={() => onSilence(1)}>
+                    For 1 hour
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => onSilence(24)}>
+                    For 24 hours
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => onSilence(168)}>
+                    For 7 days
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            )}
+            {canEdit && onSendCommand && source?.source_type === "device" && (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => onSendCommand("start_stream")}
+                className="h-7 text-xs gap-1.5"
+                title="Ask the device to (re)start its telemetry stream"
+              >
+                <Play className="h-3 w-3" />
+                Restart stream
               </Button>
             )}
           </div>

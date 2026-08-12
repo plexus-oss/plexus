@@ -190,6 +190,12 @@ export const eventMonitors = pgTable(
     severity: text().default("info").notNull(),
     message: text(),
     enabled: boolean().default(true).notNull(),
+    // Wall-clock suppression: the poll loop skips this monitor (no alert, no
+    // notification) until this passes. Null/past = not silenced.
+    silenced_until: timestamp("silenced_until", {
+      withTimezone: true,
+      mode: "string",
+    }),
     created_at: timestamp("created_at", {
       withTimezone: true,
       mode: "string",
@@ -337,6 +343,12 @@ export const sourceLimits = pgTable(
     max: doublePrecision(),
     severity: alertSeverity().default("warning").notNull(),
     message: text(),
+    // Wall-clock suppression, mirrored with alert_rules.silenced_until by the
+    // threshold double-write. Null/past = not silenced.
+    silenced_until: timestamp("silenced_until", {
+      withTimezone: true,
+      mode: "string",
+    }),
     created_at: timestamp("created_at", {
       withTimezone: true,
       mode: "string",
@@ -752,6 +764,14 @@ export const alertRules = pgTable(
     sub_rules: jsonb("sub_rules"),
     hysteresis_seconds: integer("hysteresis_seconds"),
     cooldown_seconds: integer("cooldown_seconds"),
+    // Wall-clock suppression: no new alerts fire from this rule until this
+    // passes. Null/past = not silenced. Distinct from `enabled` — houston
+    // keeps evaluating (hysteresis/cooldown state survives), the frontend
+    // drops the insert and its notifications.
+    silenced_until: timestamp("silenced_until", {
+      withTimezone: true,
+      mode: "string",
+    }),
     severity: text().default("warning").notNull(),
     enabled: boolean().default(true).notNull(),
     // Explicit notification targets (slack/email/webhook integration ids).

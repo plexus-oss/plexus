@@ -21,6 +21,7 @@ import "server-only";
 import { and, eq } from "drizzle-orm";
 import { db } from "@/lib/db/client";
 import { alertRules } from "@/lib/db/schema";
+import { isSilenced } from "@/lib/alerts/silence";
 import {
   adminSourceQueries,
   adminAlertQueries,
@@ -46,6 +47,7 @@ interface OfflineRuleRow {
   source_id: string;
   conditions: { timeout_seconds?: number } | null;
   severity: string;
+  silenced_until: string | null;
 }
 
 export interface OfflineScanResult {
@@ -63,6 +65,7 @@ export async function detectOfflineOnce(): Promise<OfflineScanResult> {
       source_id: alertRules.source_id,
       conditions: alertRules.conditions,
       severity: alertRules.severity,
+      silenced_until: alertRules.silenced_until,
     })
     .from(alertRules)
     .where(
@@ -99,7 +102,9 @@ export async function detectOfflineOnce(): Promise<OfflineScanResult> {
 
       const sourceLabel = source.name || source.slug;
 
-      if (stale && !open) {
+      // Silenced rules never open a NEW alert; an already-open alert still
+      // auto-closes below when the source resumes, so state can't wedge.
+      if (stale && !open && !isSilenced(rule.silenced_until)) {
         const message = `No data from ${sourceLabel} for ${formatTimeout(
           timeoutMs / 1000,
         )}`;

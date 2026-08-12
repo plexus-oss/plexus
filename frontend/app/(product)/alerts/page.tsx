@@ -34,6 +34,7 @@ import {
   type AlertSourceFields,
 } from "@/lib/alerts/event-summary";
 import { EntityActions } from "@/components/ui/entity-actions";
+import { toast } from "@/lib/toast-utils";
 import { AlertStoryPanel } from "@/components/alerts/alert-story-panel";
 import { useRole } from "@/hooks/use-role";
 
@@ -109,7 +110,61 @@ export default function AlertsPage() {
     selectedAlert?.source_id ?? null,
   );
 
-  const { events, verdictStats } = useAlertDetail(selectedAlertId);
+  const {
+    events,
+    verdictStats,
+    refresh: refreshDetail,
+  } = useAlertDetail(selectedAlertId);
+
+  const handleSilence = useCallback(
+    async (hours: number) => {
+      if (!selectedAlertId) return;
+      const res = await fetch(`/api/alerts/${selectedAlertId}/silence`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ hours }),
+      });
+      const body = (await res.json().catch(() => ({}))) as { error?: string };
+      if (res.ok) {
+        toast.success(
+          hours === 1
+            ? "Monitor silenced for 1 hour"
+            : `Monitor silenced for ${hours === 168 ? "7 days" : `${hours} hours`}`,
+        );
+        refreshDetail();
+      } else {
+        toast.error(body.error || "Couldn't silence this monitor");
+      }
+    },
+    [selectedAlertId, refreshDetail],
+  );
+
+  const handleSendCommand = useCallback(
+    async (command: string) => {
+      if (!selectedAlert?.source_id) return;
+      const res = await fetch(
+        `/api/sources/${selectedAlert.source_id}/command`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ command, alertId: selectedAlert.id }),
+        },
+      );
+      const body = (await res.json().catch(() => ({}))) as {
+        queued?: boolean;
+        error?: string;
+      };
+      if (res.ok && body.queued) {
+        toast.success(`Sent ${command} to the device`);
+      } else if (res.ok) {
+        toast.error("Device not connected — command not delivered");
+      } else {
+        toast.error(body.error || "Couldn't send the command");
+      }
+      refreshDetail();
+    },
+    [selectedAlert, refreshDetail],
+  );
 
   const { activeIndex, activeRef } = useListNavigation({
     items: alerts,
@@ -367,6 +422,8 @@ export default function AlertsPage() {
                 sourceContext={sourceContext}
                 onClose={() => setSelectedAlertId(null)}
                 onAction={(action) => handleAction(selectedAlert.id, action)}
+                onSilence={handleSilence}
+                onSendCommand={handleSendCommand}
                 onAddComment={async (message) => {
                   const success = await addComment(selectedAlert.id, message);
                   if (success) refresh();

@@ -104,13 +104,16 @@ function buildLinePanel(
   sourceId: string,
   i: number,
   yOffset: number,
+  /** True when the same metric also has a stat tile — disambiguate the title
+   *  so the pair doesn't read as an accidental duplicate. */
+  hasTwin = false,
 ): Panel {
   const x = (i % 2) * LINE_W;
   const y = yOffset + Math.floor(i / 2) * LINE_H;
   return {
     id: `line-${i + 1}`,
     type: "line",
-    title: humanize(metric),
+    title: hasTwin ? `${humanize(metric)} · trend` : humanize(metric),
     metrics: [`${sourceId}:${metric}`],
     sources: [sourceId],
     dataSource: { type: "realtime" },
@@ -199,9 +202,10 @@ export function buildPanels(
     .slice(0, MAX_TOTAL_PANELS - tiles.length);
 
   // Stat tiles occupy y=0..STAT_H. Line charts start one row below.
+  const tileMetricSet = new Set(tileCandidates.map((s) => s.metric));
   const lineYOffset = STAT_H;
   const lines = lineMetrics.map((m, i) =>
-    buildLinePanel(m, sourceId, i, lineYOffset),
+    buildLinePanel(m, sourceId, i, lineYOffset, tileMetricSet.has(m)),
   );
 
   return [...tiles, ...lines];
