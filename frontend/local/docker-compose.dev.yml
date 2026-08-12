@@ -145,7 +145,7 @@ services:
       clickhouse:
         condition: service_healthy
 
-  # ── alert-service (build ../../houston — repo plexus-private/houston) ───────
+  # ── alert-service (build ../../houston — this monorepo) ─────────────────────
   alert-service:
     build: ../../houston
     image: plexus-dev/alert-service:local
@@ -163,7 +163,7 @@ services:
       redis:
         condition: service_healthy
 
-  # ── data-api (build ../../api — repo plexus-private/api) ────────────────────
+  # ── data-api (build ../../api — this monorepo) ──────────────────────────────
   # Uses the frontend's Postgres (host) for plx_ API-key auth — one DB, not two.
   # Ancillary: off by default; started with `EXTRAS=1 make backend/dev`.
   data-api:
@@ -193,9 +193,10 @@ services:
       gateway:
         condition: service_started
 
-  # ── recorder (build ../../video-recorder — repo plexus-private/video-recorder)
-  # Behind its own profile (NOT extras): most checkouts don't have the repo
-  # cloned, and compose fails at build time on a missing context. To run it:
+  # ── recorder (build ../../video-recorder — internal-only, private repo) ──────
+  # Behind its own profile (NOT extras): the repo is not part of this monorepo,
+  # so most checkouts don't have it and compose fails at build time on a
+  # missing context. Internal devs only:
   #   git clone git@github.com:plexus-private/video-recorder.git ../../video-recorder
   #   docker compose --env-file .env -f docker-compose.dev.yml --profile recorder up -d --build
   recorder:

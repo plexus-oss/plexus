@@ -36,10 +36,16 @@ cd api      && fly deploy
 cd clickhouse/server && ./deploy.sh deploy   # see its README
 ```
 
-Deploy whenever a change is ready — Cloud is continuous. (The old
-push-to-main auto-deploy died with the archived per-service repos; deploys
-are manual until the `ci` + `fly-deploy` workflows are ported to this repo's
-root `.github/workflows/` with path filters and a `FLY_API_TOKEN` secret.)
+Deploy whenever a change is ready — Cloud is continuous. The **frontend
+auto-deploys**: a green `ci` run on `main` triggers `fly-deploy`
+(`.github/workflows/fly-deploy.yml`, `FLY_API_TOKEN` scoped to
+`plexus-frontend`), so a frontend push to `main` ships itself. The other
+services deploy manually with the commands above.
+
+CI gates on PRs and `main`, path-filtered per service: `ci` (frontend
+lint/typecheck/hermetic DB tests) + `db-schema` (Drizzle migration drift),
+`gateway-ci` (fmt/vet/race + Redis integration), `houston-ci` (fmt/vet/race),
+`api-ci` (pytest). `clickhouse/` has no test suite yet, so no gate.
 
 ## Releasing to self-hosters
 
@@ -75,13 +81,13 @@ every repo and keys are minted offline with
 
 ## Everything that is NOT this repo
 
-| Surface | Repo | How it ships |
-| --- | --- | --- |
-| plexus.company | `plexus-private/marketing` | push to main → Vercel |
-| docs.plexus.company | `plexus-private/docs` | push to main → pipeline |
-| Python/TS SDKs | `plexus-oss/plexus-python` / `-typescript` | version tag → OIDC publish to PyPI/npm |
-| Internal cron (chores) | `plexus-private/ins-and-outs` | `fly deploy` |
-| Video recorder | `plexus-private/video-recorder` | `fly deploy` |
+| Surface                | Repo                                       | How it ships                           |
+| ---------------------- | ------------------------------------------ | -------------------------------------- |
+| plexus.company         | `plexus-private/marketing`                 | push to main → Vercel                  |
+| docs.plexus.company    | `plexus-private/docs`                      | push to main → pipeline                |
+| Python/TS SDKs         | `plexus-oss/plexus-python` / `-typescript` | version tag → OIDC publish to PyPI/npm |
+| Internal cron (chores) | `plexus-private/ins-and-outs`              | `fly deploy`                           |
+| Video recorder         | `plexus-private/video-recorder`            | `fly deploy`                           |
 
 The five archived `plexus-private` repos (gateway, clickhouse, api, houston,
 frontend) are history only — never commit there.
