@@ -27,18 +27,23 @@
 
     <nextjs_reader>
       <password_sha256_hex from_env="CH_READER_PASSWORD_SHA256"/>
-      <!-- Publicly reachable via Fly edge; keep open until you scope to
-           specific egress IPs. -->
+      <!-- Committed value allows all sources so local compose works.
+           server/Dockerfile rewrites this to fdaa::/16 (Fly 6PN only) for the
+           Fly image — the frontend reaches it over plexus-ch.internal, so it
+           does NOT need the public edge. Do not re-open to 0.0.0.0/0: this is
+           an all-tenant read credential. -->
       <networks><ip>0.0.0.0/0</ip><ip>::/0</ip></networks>
       <profile>readonly</profile>
       <access_management>0</access_management>
     </nextjs_reader>
 
-    <!-- Human operator / schema author. Full read+write+DDL, reachable
-         from the public internet, can manage users and grants. Plaintext
-         lives in your password manager only — never commit it here. To
-         rotate: generate a new plaintext, sha256 it, update the
-         CH_ADMIN_PASSWORD_SHA256 secret, redeploy. -->
+    <!-- Human operator / schema author. Full read+write+DDL, can manage users
+         and grants. Committed value allows all sources so local compose works;
+         server/Dockerfile rewrites this to fdaa::/16 (Fly 6PN only) for the Fly
+         image so this privileged account is NEVER reachable from the public
+         edge — reach it with `fly proxy 8123 -a plexus-ch` then localhost.
+         Plaintext lives in your password manager only — never commit it here.
+         Rotate: new plaintext → sha256 → update CH_ADMIN_PASSWORD_SHA256 → redeploy. -->
     <admin>
       <password_sha256_hex from_env="CH_ADMIN_PASSWORD_SHA256"/>
       <networks><ip>0.0.0.0/0</ip><ip>::/0</ip></networks>

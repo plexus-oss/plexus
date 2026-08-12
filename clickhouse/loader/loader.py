@@ -371,12 +371,26 @@ def build_batch(
                     _prom_dropped.labels(reason="bad_point").inc()
                     continue
                 pt_class = pt.get("class", "metric")
-                if pt_class == "metric":
-                    rows.append(build_row(org_id, source_id, pt, ingested_at_ms))
-                elif pt_class == "event":
-                    event_rows.append(build_event_row(org_id, source_id, pt, ingested_at_ms))
-                else:
-                    _prom_dropped.labels(reason="unknown_class").inc()
+                # Build each row defensively. A single malformed point — a
+                # non-numeric `value`, an out-of-range `timestamp`, or
+                # unserializable `metadata` — raises inside build_row /
+                # build_event_row. Unguarded, that exception unwinds the whole
+                # batch BEFORE the message is ACKed, so it replays from the PEL
+                # on restart and crash-loops ingest for EVERY tenant. Drop the
+                # bad point instead; good points in the same message still land.
+                try:
+                    if pt_class == "metric":
+                        rows.append(build_row(org_id, source_id, pt, ingested_at_ms))
+                    elif pt_class == "event":
+                        event_rows.append(build_event_row(org_id, source_id, pt, ingested_at_ms))
+                    else:
+                        _prom_dropped.labels(reason="unknown_class").inc()
+                except Exception as exc:
+                    _prom_dropped.labels(reason="malformed_point").inc()
+                    log.warning(
+                        "dropped malformed point from %s/%s: %s",
+                        org_id, source_id, exc,
+                    )
 
     return rows, event_rows, ack_by_stream
 

@@ -24,6 +24,7 @@ import type {
 } from "next-auth/adapters";
 import { and, eq } from "drizzle-orm";
 import { db } from "@/lib/db/client";
+import { isOtpLocked, recordOtpFailure, clearOtpFailures } from "@/lib/auth/otp-throttle";
 import {
   users,
   authAccounts,
@@ -226,18 +227,41 @@ export function supabaseAdapter(): Adapter {
     },
 
     async useVerificationToken({ identifier, token }) {
+      const id = identifier.toLowerCase();
+
+      // Brute-force guard: too many wrong guesses for this email → refuse and
+      // burn every outstanding code so the attacker can't keep trying and the
+      // real user must request a fresh one.
+      if (isOtpLocked(id)) {
+        await db
+          .delete(authVerificationTokens)
+          .where(eq(authVerificationTokens.identifier, id));
+        return null;
+      }
+
       // Single-use: delete-returning. A second attempt with the same code
       // finds nothing and fails verification.
       const [row] = await db
         .delete(authVerificationTokens)
         .where(
           and(
-            eq(authVerificationTokens.identifier, identifier.toLowerCase()),
+            eq(authVerificationTokens.identifier, id),
             eq(authVerificationTokens.token, token),
           ),
         )
         .returning();
-      if (!row) return null;
+      if (!row) {
+        // Wrong (or already-used) code. Count it; on lockout, invalidate all
+        // outstanding codes for this identifier.
+        const { locked } = recordOtpFailure(id);
+        if (locked) {
+          await db
+            .delete(authVerificationTokens)
+            .where(eq(authVerificationTokens.identifier, id));
+        }
+        return null;
+      }
+      clearOtpFailures(id);
       return {
         identifier: row.identifier,
         token: row.token,

@@ -6,6 +6,7 @@ import { CreateWebhookSchema } from "@/lib/validation/api-schemas";
 import { webhookQueries } from "@/lib/db/supabase";
 import { emitSystemEvent } from "@/lib/events/emit";
 import { apiError } from "@/lib/api/errors";
+import { assertPublicUrl, SsrfError } from "@/lib/security/ssrf";
 
 /**
  * GET /api/webhooks - List all webhooks for the organization
@@ -32,10 +33,16 @@ export const POST = withPermission("action-create-webhook", async (request, { us
   const { name, description, url, events, sourceFilter, customHeaders } =
     await validateBody(request, CreateWebhookSchema);
 
-  // Validate URL protocol (Zod validates format, we check protocol)
-  const parsedUrl = new URL(url);
-  if (!["http:", "https:"].includes(parsedUrl.protocol)) {
-    throw apiError("VALIDATION_ERROR", "URL must use HTTP or HTTPS protocol");
+  // Validate URL protocol AND that it doesn't point at a private/loopback/
+  // metadata/6PN address (SSRF). Re-checked at delivery time too, but reject
+  // obviously-bad URLs up front with a clear error.
+  try {
+    await assertPublicUrl(url, { allowHttp: true });
+  } catch (error) {
+    throw apiError(
+      "VALIDATION_ERROR",
+      error instanceof SsrfError ? error.message : "Invalid webhook URL",
+    );
   }
 
   // Generate a secure secret. `secret_prefix` is the public-safe first

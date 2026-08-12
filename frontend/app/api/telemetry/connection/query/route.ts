@@ -9,6 +9,7 @@
 import { NextResponse } from "next/server";
 import { withOrgAuth } from "@/lib/api/with-auth";
 import { validateReadOnlyQuery } from "@/lib/db/data-source-connections";
+import { validateInternalTelemetryQuery } from "@/lib/db/drivers/shared/query-helpers";
 import { getClient } from "@/lib/db/clickhouse";
 import { loadAllowedSourceIds } from "@/lib/access/sources";
 import { sourceQueries } from "@/lib/db/queries/sources";
@@ -66,15 +67,13 @@ export const POST = withOrgAuth(async (request, { orgId, userId }) => {
       return NextResponse.json({ error: validation.error }, { status: 400 });
     }
 
-    // Block fully-qualified table references that would bypass the CTE shadow
-    if (/plexus\.telemetry/i.test(userQuery)) {
-      return NextResponse.json(
-        {
-          error:
-            "Use unqualified table name 'telemetry' instead of 'plexus.telemetry'",
-        },
-        { status: 400 },
-      );
+    // Strict ClickHouse guard: block table functions (merge/url/s3/remote/...)
+    // and any schema-qualified table reference (plexus.events, system.*, ...)
+    // that would read around the org-scoped CTE below. The only legitimate
+    // source is the unqualified, CTE-shadowed `telemetry` table.
+    const chGuard = validateInternalTelemetryQuery(userQuery);
+    if (!chGuard.valid) {
+      return NextResponse.json({ error: chGuard.error }, { status: 400 });
     }
 
     const limit = Math.min(body.limit ?? 1000, 10000);
@@ -110,7 +109,8 @@ export const POST = withOrgAuth(async (request, { orgId, userId }) => {
     const hasLimit = /\bLIMIT\s+\d+/i.test(boundQuery);
     const wrappedQuery = `WITH telemetry AS (SELECT * FROM telemetry WHERE org_id = {orgId:String}${scopePredicate})\n${boundQuery}${hasLimit ? "" : `\nLIMIT ${limit}`}`;
 
-    const client = getClient();
+    // Pass orgId so the row-policy backstop (when enabled) stamps plexus_org_id.
+    const client = getClient(orgId);
     const startTime = Date.now();
 
     try {

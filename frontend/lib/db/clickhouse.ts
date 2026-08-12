@@ -64,27 +64,55 @@ const cache = globalSingleton("clickhouse", () => ({
   createdAt: 0,
   writeClient: undefined as ClickHouseClient | undefined,
   writeCreatedAt: 0,
+  globalClient: undefined as ClickHouseClient | undefined,
+  globalCreatedAt: 0,
 }));
 
-export function getClient(): ClickHouseClient {
-  const now = Date.now();
-  const age = now - cache.createdAt;
+// ── Row-policy backstop (Option B) ──────────────────────────────────────
+// When enabled, every ORG-SCOPED read sends a per-query custom setting
+// `plexus_org_id`. A ClickHouse row policy `USING org_id = getSetting(
+// 'plexus_org_id')` on the tenant tables then makes the DATABASE refuse
+// cross-tenant rows even if an app query forgets its `WHERE org_id`. This is
+// defense-in-depth beneath the app-layer scoping — see clickhouse/server/
+// schema.sql for the policies + server config prerequisite.
+//
+// Gated OFF by default so this code is a pure no-op until the operator has (1)
+// deployed the `custom_settings_prefixes` server config and (2) applied the
+// row policies. Flip PLEXUS_CH_ROW_POLICY=1 only after both are live (verify
+// in staging first — a missed org-scoped read would return empty once the
+// policy is enforcing). Cross-org reads must use getGlobalReadClient().
+const ROW_POLICY_ENABLED = process.env.PLEXUS_CH_ROW_POLICY === "1";
+const ORG_SETTING = "plexus_org_id";
 
-  if (cache.client && age < CLIENT_TTL_MS) {
-    return cache.client;
-  }
+/** Wrap a client so query/command/exec carry the org-scoping setting. */
+function withOrgScope(client: ClickHouseClient, orgId: string): ClickHouseClient {
+  return new Proxy(client, {
+    get(target, prop, receiver) {
+      if (prop === "query" || prop === "command" || prop === "exec" || prop === "insert") {
+        const orig = Reflect.get(target, prop, receiver) as (params: Record<string, unknown>) => unknown;
+        return (params: Record<string, unknown>) =>
+          orig.call(target, {
+            ...params,
+            clickhouse_settings: {
+              ...((params?.clickhouse_settings as Record<string, unknown>) ?? {}),
+              [ORG_SETTING]: orgId,
+            },
+          });
+      }
+      return Reflect.get(target, prop, receiver);
+    },
+  });
+}
 
-  cache.client?.close().catch(() => {});
-
+function buildReadClient(user: string, password: string): ClickHouseClient {
   const url = process.env.PLEXUS_CLICKHOUSE_URL;
   if (!url) {
     throw new Error("PLEXUS_CLICKHOUSE_URL environment variable is required");
   }
-
-  cache.client = createClient({
+  return createClient({
     url,
-    username: process.env.PLEXUS_CLICKHOUSE_USER || "plexus",
-    password: process.env.PLEXUS_CLICKHOUSE_PASSWORD || "",
+    username: user,
+    password,
     database: process.env.PLEXUS_CLICKHOUSE_DATABASE || "plexus",
     request_timeout: 30000,
     ...(url.startsWith("https://")
@@ -96,9 +124,56 @@ export function getClient(): ClickHouseClient {
         }
       : {}),
   });
-  cache.createdAt = now;
+}
 
+/**
+ * Shared read client. Pass `orgId` for ORG-SCOPED reads: when the row-policy
+ * backstop is enabled it stamps the query with the `plexus_org_id` setting the
+ * DB policy enforces on. Omit `orgId` ONLY for genuinely non-tenant work
+ * (DDL, schema/`system` reads); for cross-org tenant reads use
+ * getGlobalReadClient() so the fail-closed policy doesn't blank the result.
+ */
+export function getClient(orgId?: string): ClickHouseClient {
+  const now = Date.now();
+  const age = now - cache.createdAt;
+
+  if (!cache.client || age >= CLIENT_TTL_MS) {
+    cache.client?.close().catch(() => {});
+    cache.client = buildReadClient(
+      process.env.PLEXUS_CLICKHOUSE_USER || "plexus",
+      process.env.PLEXUS_CLICKHOUSE_PASSWORD || "",
+    );
+    cache.createdAt = now;
+  }
+
+  if (orgId && ROW_POLICY_ENABLED) {
+    return withOrgScope(cache.client, orgId);
+  }
   return cache.client;
+}
+
+/**
+ * Read client for CROSS-ORG tenant reads (rollup reconciliation, ops
+ * aggregations that legitimately span every org). Uses a dedicated CH user
+ * (PLEXUS_CLICKHOUSE_GLOBAL_USER) that the row policy does NOT target, so it is
+ * never subject to the per-org filter. Falls back to the standard read client
+ * when that user isn't provisioned — safe because the fallback path only
+ * matters once the policy is enforcing, and until then behavior is unchanged.
+ */
+export function getGlobalReadClient(): ClickHouseClient {
+  const user = process.env.PLEXUS_CLICKHOUSE_GLOBAL_USER;
+  if (!user) return getClient();
+
+  const now = Date.now();
+  if (!cache.globalClient || now - cache.globalCreatedAt >= CLIENT_TTL_MS) {
+    cache.globalClient?.close().catch(() => {});
+    cache.globalClient = buildReadClient(
+      user,
+      process.env.PLEXUS_CLICKHOUSE_GLOBAL_PASSWORD || "",
+    );
+    cache.globalCreatedAt = now;
+  }
+  return cache.globalClient;
 }
 
 /**
@@ -214,7 +289,7 @@ const QUERYABLE_COLUMNS = [
 export async function queryTelemetry(
   options: TelemetryQueryOptions,
 ): Promise<TelemetryRow[]> {
-  const client = getClient();
+  const client = getClient(options.orgId);
   const {
     orgId,
     sourceId,
@@ -299,7 +374,7 @@ export async function queryTelemetry(
 export async function countTelemetry(
   options: Omit<TelemetryQueryOptions, "limit">,
 ): Promise<number> {
-  const client = getClient();
+  const client = getClient(options.orgId);
   const { orgId, sourceId, startTime, endTime, metric, metrics } = options;
 
   const conditions: string[] = [
@@ -352,7 +427,7 @@ export async function getSourceMetrics(
   orgId: string,
   sourceId: string,
 ): Promise<string[]> {
-  const client = getClient();
+  const client = getClient(orgId);
 
   try {
     const result = await client.query({
@@ -382,7 +457,7 @@ export async function getSourceMetrics(
 export async function getAllSourceMetrics(
   orgId: string,
 ): Promise<Map<string, string[]>> {
-  const client = getClient();
+  const client = getClient(orgId);
 
   try {
     const result = await client.query({
@@ -437,7 +512,7 @@ export interface RetentionInfo {
  * Get retention info for an organization
  */
 export async function getRetentionInfo(orgId: string): Promise<RetentionInfo> {
-  const client = getClient();
+  const client = getClient(orgId);
 
   try {
     const result = await client.query({
@@ -519,7 +594,7 @@ export async function getUsageInfo(
   orgId: string,
   options?: { from?: Date; to?: Date },
 ): Promise<UsageInfo> {
-  const client = getClient();
+  const client = getClient(orgId);
 
   const fromIso = options?.from
     ?.toISOString()
@@ -642,7 +717,7 @@ export async function getMetricPercentiles(
   p95: number;
   p99: number;
 } | null> {
-  const client = getClient();
+  const client = getClient(orgId);
 
   try {
     const result = await client.query({
@@ -699,7 +774,7 @@ export async function getLatestMetricsBySource(
 > {
   if (sourceIds.length === 0) return {};
 
-  const client = getClient();
+  const client = getClient(orgId);
 
   try {
     const result = await client.query({
@@ -762,7 +837,7 @@ export async function getLatestMetricsBySource(
 export async function getLatestDataPerSource(
   lookbackDays = 7,
 ): Promise<Array<{ org_id: string; source_id: string; last_data_at: string }>> {
-  const client = getClient();
+  const client = getGlobalReadClient();
 
   try {
     const result = await client.query({
@@ -823,7 +898,7 @@ export async function getDataSummaryBySource(
 ): Promise<
   Array<{ source_id: string; row_count: number; frame_count: number }>
 > {
-  const client = getClient();
+  const client = getClient(orgId);
   const result = await client.query({
     query: `SELECT source_id, count() as row_count, countIf(metric = '_frame') as frame_count FROM telemetry WHERE org_id = {orgId:String} GROUP BY source_id ORDER BY row_count DESC`,
     query_params: { orgId },
@@ -907,7 +982,7 @@ export async function queryFleetHealth(
     last_data_at: string;
   }>
 > {
-  const client = getClient();
+  const client = getClient(orgId);
   const startTime = new Date(Date.now() - windowMs);
 
   try {
@@ -1029,7 +1104,7 @@ export async function queryHourlyRollup(
     bucket_sum: number | string;
   }>
 > {
-  const client = getClient();
+  const client = getClient(orgId);
 
   try {
     const result = await client.query({
@@ -1151,7 +1226,7 @@ export async function queryMinuteRollup(
     bucket_sum: number | string;
   }>
 > {
-  const client = getClient();
+  const client = getClient(orgId);
 
   try {
     // Production rollup is `plexus.telemetry_1min` (materialized view over
@@ -1288,7 +1363,7 @@ export async function queryTelemetryAdaptive(
   // > 1h, ≤ 6h → query-time downsample
   if (timeRangeMs <= SIX_HOURS) {
     const intervalSeconds = Math.ceil(timeRangeMs / (2000 * 1000));
-    const client = getClient();
+    const client = getClient(orgId);
 
     try {
       const result = await client.query({
@@ -1406,7 +1481,7 @@ export async function queryTelemetryAdaptive(
 
     // Fallback: minute rollup empty (table new, no backfill), use query-time downsample
     const intervalSeconds = Math.ceil(timeRangeMs / (2000 * 1000));
-    const client = getClient();
+    const client = getClient(orgId);
     try {
       const result = await client.query({
         query: `
@@ -1502,7 +1577,7 @@ export async function queryTelemetryAdaptive(
 
   // Fallback: hourly rollup empty, use query-time downsample
   const intervalSeconds = Math.ceil(timeRangeMs / (2000 * 1000));
-  const client = getClient();
+  const client = getClient(orgId);
   try {
     const result = await client.query({
       query: `
@@ -1597,7 +1672,7 @@ export async function queryTelemetryOverview(
   bucketSeconds: number,
 ): Promise<TelemetryOverviewResult> {
   if (pairs.length === 0) return { buckets: [], earliest: null };
-  const client = getClient();
+  const client = getClient(orgId);
 
   const params: Record<string, unknown> = {
     orgId,
@@ -1665,7 +1740,7 @@ export async function queryEvents(
     limit?: number;
   } = {},
 ): Promise<DeviceEvent[]> {
-  const client = getClient();
+  const client = getClient(orgId);
   const { startTime, endTime, name, limit = 500 } = options;
 
   const conditions = ["org_id = {orgId:String}"];

@@ -379,3 +379,100 @@ CREATE TABLE IF NOT EXISTS plexus.video_sessions_dist ON CLUSTER observability_c
 AS plexus.video_sessions
 ENGINE = Distributed('observability_cluster', 'plexus', 'video_sessions', cityHash64(org_id));
 
+-- ════════════════════════════════════════════════════════════════════
+-- Least-privilege user for the customer-facing telemetry query console
+-- (frontend /api/telemetry/connection/query). DURABLE BACKSTOP for the
+-- app-layer guard in lib/db/drivers/shared/query-helpers.ts
+-- (validateInternalTelemetryQuery): even if that guard is ever bypassed,
+-- this user physically cannot read around the org-scoped CTE because it is
+-- granted SELECT on the telemetry tables ONLY and has every table function
+-- (merge/remote/url/s3/file/cluster/…) revoked.
+--
+-- Apply once, then point the route's client at these creds via
+-- PLEXUS_CLICKHOUSE_QUERY_USER / PLEXUS_CLICKHOUSE_QUERY_PASSWORD
+-- (provision the password with: fly secrets set ... -a plexus-ch).
+--
+--   CREATE USER IF NOT EXISTS nextjs_query
+--       IDENTIFIED WITH sha256_password BY '<generated>'
+--       SETTINGS readonly = 1, allow_ddl = 0,
+--                allow_introspection_functions = 0,
+--                max_execution_time = 30, max_result_rows = 100000;
+--
+--   -- SELECT only on the two tables the console needs; nothing else in
+--   -- plexus.*, no system.*, no information_schema.*.
+--   GRANT SELECT ON plexus.telemetry      TO nextjs_query;
+--   GRANT SELECT ON plexus.telemetry_dist TO nextjs_query;
+--
+--   -- Revoke ALL table/dictionary functions (these are the SSRF /
+--   -- cross-tenant vectors). ClickHouse grants them via named privileges:
+--   REVOKE remote, remoteSecure, cluster, clusterAllReplicas,
+--          url, s3, s3Cluster, gcs, file, hdfs,
+--          mysql, postgresql, mongodb, jdbc, odbc, sqlite, redis,
+--          azureBlobStorage, deltaLake, hudi, iceberg,
+--          dictGet, addressToLine, addressToSymbol, demangle
+--       ON *.* FROM nextjs_query;
+--
+-- NOTE: `merge()` reads only tables the user can already SELECT, so with the
+-- grant above scoped to plexus.telemetry it cannot widen access; the app-layer
+-- guard blocks it outright regardless.
+
+-- ════════════════════════════════════════════════════════════════════
+-- ROW-LEVEL SECURITY BACKSTOP (Option B)  — DB-enforced tenant isolation
+-- ════════════════════════════════════════════════════════════════════
+-- Makes the DATABASE refuse cross-tenant rows even if an app query forgets
+-- its `WHERE org_id`. The frontend stamps every ORG-SCOPED read with a custom
+-- per-query setting `plexus_org_id` (lib/db/clickhouse.ts getClient(orgId)),
+-- and these policies filter the tenant tables on that value. Fail-closed: a
+-- read that doesn't set it (or sets the wrong org) sees ZERO rows.
+--
+-- Because policies attach to a USER, this design uses TWO read users:
+--   • nextjs_reader   — the app's org-scoped reads. Policies below TARGET it.
+--   • nextjs_global   — cross-org internal reads (rollup reconciliation, ops).
+--                       NOT targeted, so it bypasses the per-org filter.
+-- Deletes run as telemetry_writer (mutations, unaffected). MV population runs
+-- under the loader's INSERT context (unaffected). DDL/DESCRIBE unaffected.
+--
+-- ── ROLLOUT ORDER (each step is safe on its own; enforcement starts at step 4)
+--   1. Deploy the server config: <custom_settings_prefixes>plexus_</...>
+--      (already in configs/clickhouse/config.xml) so `plexus_org_id` is a
+--      legal setting. Without this, setting it would error.
+--   2. Provision nextjs_global + set PLEXUS_CLICKHOUSE_GLOBAL_USER /
+--      _GLOBAL_PASSWORD on the frontend (fly secrets). Until set, cross-org
+--      reads fall back to nextjs_reader — fine while the policy is not yet on.
+--   3. Deploy the frontend with the wiring merged (no-op while the flag is off).
+--   4. Apply the policies below, THEN flip PLEXUS_CH_ROW_POLICY=1 on the
+--      frontend. VERIFY IN STAGING FIRST: with the flag on and policies applied,
+--      confirm dashboards/queries still return data (a missed org-scoped read
+--      would now come back empty). Roll back by unsetting the flag.
+--
+--   CREATE USER IF NOT EXISTS nextjs_global
+--       IDENTIFIED WITH sha256_password BY '<generated>'
+--       SETTINGS readonly = 1;
+--   GRANT SELECT ON plexus.* TO nextjs_global;   -- cross-org internal reads
+--
+--   -- One policy per tenant table nextjs_reader SELECTs from. The policy is
+--   -- PERMISSIVE for the matching org; TO nextjs_reader scopes it to that user.
+--   -- Apply to BOTH the local and _dist variants of each table.
+--   CREATE ROW POLICY IF NOT EXISTS org_isolation ON plexus.telemetry
+--       ON CLUSTER observability_cluster
+--       USING org_id = getSetting('plexus_org_id') TO nextjs_reader;
+--   CREATE ROW POLICY IF NOT EXISTS org_isolation ON plexus.telemetry_dist
+--       ON CLUSTER observability_cluster
+--       USING org_id = getSetting('plexus_org_id') TO nextjs_reader;
+--   -- Repeat verbatim for every other tenant table the reader touches:
+--   --   plexus.events, plexus.events_dist,
+--   --   plexus.telemetry_1min, plexus.telemetry_1min_dist,
+--   --   plexus.telemetry_1hr,  plexus.telemetry_1hr_dist,
+--   --   plexus.video_sessions, plexus.video_sessions_dist
+--   -- (any table with an org_id column that nextjs_reader can read).
+--
+-- WARNING — once ANY policy exists on a table, users NOT covered by a policy
+-- on it are filtered to nothing. nextjs_global is intentionally not targeted,
+-- so give it a permissive policy if you ever add one that would catch it:
+--   CREATE ROW POLICY IF NOT EXISTS allow_all ON plexus.telemetry
+--       AS PERMISSIVE USING 1 TO nextjs_global;   -- (only if needed)
+--
+-- The console user (nextjs_query, above) is a separate, stricter path; if the
+-- console also rides nextjs_reader, its raw SQL cannot override plexus_org_id
+-- because validateInternalTelemetryQuery rejects any SETTINGS clause.
+

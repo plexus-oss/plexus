@@ -17,6 +17,7 @@ import { validateReadOnlyQuery } from "./drivers/shared/query-helpers";
 import { clickhouseDriver } from "./drivers/clickhouse";
 import { encrypt, decrypt } from "@/lib/encryption";
 import { adminSourceQueries } from "@/lib/db/server";
+import { assertPublicUrl, assertPublicHost } from "@/lib/security/ssrf";
 
 // =============================================================================
 // Re-exports (preserve existing import paths)
@@ -92,21 +93,45 @@ export function buildSSHTunnelConfig(
 // DriverContext builder — handles legacy URL format and new JSON creds format
 // =============================================================================
 
-function buildDriverContext(
+/**
+ * SSRF guard for outbound data-source connections. The destination host comes
+ * straight from user input, so block any that resolves to loopback/private/
+ * metadata/6PN space. With an SSH tunnel we connect to the (public) jump host
+ * and the DB host is reached through it on the customer's own network, so we
+ * validate the tunnel host in that case rather than the DB host.
+ */
+async function assertEgressAllowed(ctx: DriverContext): Promise<void> {
+  if (ctx.sshTunnel?.host) {
+    await assertPublicHost(ctx.sshTunnel.host);
+    return;
+  }
+  const cfg = ctx.config as { url?: unknown; host?: unknown };
+  if (typeof cfg.url === "string" && cfg.url) {
+    await assertPublicUrl(cfg.url, { allowHttp: true });
+  } else if (typeof cfg.host === "string" && cfg.host) {
+    await assertPublicHost(cfg.host);
+  }
+}
+
+async function buildDriverContext(
   type: DataSourceType,
   connectionString: string,
   sshTunnel?: SSHTunnelConfig,
   existingConfig?: Record<string, unknown>,
-): DriverContext {
+): Promise<DriverContext> {
   const driver = getDriver(type);
+  let ctx: DriverContext;
   // New format: credentials_encrypted decrypts to a JSON object
   if (connectionString.trimStart().startsWith("{")) {
     const creds = JSON.parse(connectionString);
-    return { type, config: existingConfig ?? {}, creds, sshTunnel };
+    ctx = { type, config: existingConfig ?? {}, creds, sshTunnel };
+  } else {
+    // Legacy format: full connection URL
+    const { config: parsedConfig, creds } = driver.parseConnectionString(connectionString);
+    ctx = { type, config: { ...parsedConfig, ...(existingConfig ?? {}) }, creds, sshTunnel };
   }
-  // Legacy format: full connection URL
-  const { config: parsedConfig, creds } = driver.parseConnectionString(connectionString);
-  return { type, config: { ...parsedConfig, ...(existingConfig ?? {}) }, creds, sshTunnel };
+  await assertEgressAllowed(ctx);
+  return ctx;
 }
 
 // =============================================================================
@@ -140,13 +165,13 @@ export async function maybeMigrateLegacySource(
 
 export async function testConnection(config: ConnectionConfig) {
   const driver = getDriver(config.type);
-  const ctx = buildDriverContext(config.type, config.connectionString, config.sshTunnel, config.existingConfig);
+  const ctx = await buildDriverContext(config.type, config.connectionString, config.sshTunnel, config.existingConfig);
   return driver.testConnection(ctx);
 }
 
 export async function getSchema(config: ConnectionConfig) {
   const driver = getDriver(config.type);
-  const ctx = buildDriverContext(config.type, config.connectionString, config.sshTunnel, config.existingConfig);
+  const ctx = await buildDriverContext(config.type, config.connectionString, config.sshTunnel, config.existingConfig);
   return driver.getSchema(ctx);
 }
 
@@ -156,7 +181,7 @@ export async function executeQuery(config: QueryConfig) {
     if (!validation.valid) throw new Error(validation.error);
   }
   const driver = getDriver(config.type);
-  const ctx = buildDriverContext(config.type, config.connectionString, config.sshTunnel, config.existingConfig);
+  const ctx = await buildDriverContext(config.type, config.connectionString, config.sshTunnel, config.existingConfig);
   return driver.executeQuery(ctx, {
     query: config.query,
     params: config.params,
@@ -320,6 +345,9 @@ export async function queryTelemetry(
 ): Promise<TelemetryRow[]> {
   const { config: chConfig, creds } = clickhouseDriver.parseConnectionString(connectionString);
   const limit = options.limit || 10000;
+
+  // SSRF guard: this connects to a user-supplied ClickHouse URL directly.
+  await assertPublicUrl(chConfig.url as string, { allowHttp: true });
 
   const client = createClickHouseClient({
     url: chConfig.url as string,

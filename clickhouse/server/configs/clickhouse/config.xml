@@ -6,6 +6,14 @@
     <level>warning</level>
   </logger>
 
+  <!-- Allow the per-query custom setting used by the row-level-security
+       backstop (Option B). The frontend stamps org-scoped reads with
+       `SET plexus_org_id = '<org>'`, and a row policy on the tenant tables
+       filters on getSetting('plexus_org_id'). Declaring the prefix is
+       harmless on its own — nothing enforces on it until the row policies in
+       schema.sql are applied AND the app flips PLEXUS_CH_ROW_POLICY=1. -->
+  <custom_settings_prefixes>plexus_</custom_settings_prefixes>
+
   <max_server_memory_usage_to_ram_ratio>0.75</max_server_memory_usage_to_ram_ratio>
   <mark_cache_size>536870912</mark_cache_size>        <!-- 512 MB; default is 5 GiB -->
   <index_mark_cache_size>536870912</index_mark_cache_size>  <!-- 512 MB; default is 5 GiB -->

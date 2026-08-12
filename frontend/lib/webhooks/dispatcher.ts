@@ -13,6 +13,7 @@ import type {
   WebhookSourceFilter,
   Source,
 } from "@/lib/db/types";
+import { assertPublicUrl, SsrfError } from "@/lib/security/ssrf";
 
 // Retry delays in milliseconds: 1 min, 5 min, 30 min
 const RETRY_DELAYS = [60_000, 300_000, 1_800_000];
@@ -100,6 +101,24 @@ export async function deliverWebhook(
 }> {
   const payloadString = JSON.stringify(payload);
   const signature = signPayload(payloadString, webhook.secret);
+
+  // SSRF guard: never let a stored webhook URL reach loopback/private/
+  // link-local/metadata or the Fly 6PN network. Checked here (not only at
+  // create time) so pre-existing webhooks and DNS-rebinding are covered too.
+  // allowHttp: legacy integrations may target http:// public endpoints; the
+  // private-address block is what actually closes the SSRF.
+  try {
+    await assertPublicUrl(webhook.url, { allowHttp: true });
+  } catch (error) {
+    return {
+      success: false,
+      responseTimeMs: 0,
+      error:
+        error instanceof SsrfError
+          ? `Blocked destination: ${error.message}`
+          : "Blocked destination",
+    };
+  }
 
   const headers: Record<string, string> = {
     "Content-Type": "application/json",

@@ -860,7 +860,7 @@ async function pollDeviceEventMonitor(
     });
     return;
   }
-  const client = getClient();
+  const client = getClient(monitor.org_id);
   const params = {
     org: monitor.org_id,
     sid: source.slug,

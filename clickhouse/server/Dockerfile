@@ -44,11 +44,22 @@ RUN sed -i 's|<host>ch-keeper</host>|<host>localhost</host>|' /etc/clickhouse-se
 # warning on each startup.
 RUN sed -i '/<listen_host>0.0.0.0<\/listen_host>/a\  <listen_host>::</listen_host>' /etc/clickhouse-server/config.d/config.xml
 
-# Lock telemetry_writer to 6PN (fdaa::/16) so the writer user is
-# unreachable from the public HTTPS exposure. The sed range limits the
-# substitution to the telemetry_writer element, leaving nextjs_reader
-# (which IS intentionally public) untouched.
-RUN sed -i '/<telemetry_writer>/,/<\/telemetry_writer>/ s|<ip>0.0.0.0/0</ip>|<ip>fdaa::/16</ip>|' /etc/clickhouse-server/users.d/users.xml
+# Lock EVERY ClickHouse user to Fly 6PN (fdaa::/16) so no account is
+# reachable from the public HTTPS edge (plexus-ch.fly.dev). Every in-cluster
+# consumer already connects over 6PN:
+#   - frontend  → plexus-ch.internal:8123 as nextjs_reader (fly.toml)
+#   - loader    → plexus-ch.internal      as telemetry_writer
+#   - operators → `fly proxy 8123 -a plexus-ch` then localhost as admin
+# so nothing needs the public edge. Previously only telemetry_writer was
+# locked; admin (access_management=1, full DDL) and nextjs_reader (all-tenant
+# read) were left at 0.0.0.0/0 — a privileged and an all-tenant account
+# exposed to the internet behind a password alone. Each sed rewrites the whole
+# <networks> element within one user's range, so it is robust to how many
+# <ip> entries that user has.
+RUN for u in telemetry_writer nextjs_reader admin; do \
+      sed -i "/<$u>/,/<\/$u>/ s|<networks>.*</networks>|<networks><ip>fdaa::/16</ip></networks>|" \
+        /etc/clickhouse-server/users.d/users.xml; \
+    done
 
 # Fly-specific entrypoint wrapper. Raises the nofile soft limit before
 # clickhouse-server forks (default Fly limit is too small for CH 26.x
