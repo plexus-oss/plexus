@@ -35,6 +35,12 @@ export interface UseSourcesOptions {
   status?: SourceStatus | SourceStatus[];
   /** Search by slug or name */
   search?: string;
+  /**
+   * Poll every N ms. Opt-in per call site — the global policy is still no
+   * focus/reconnect revalidation. Used by the first-run screen, which has to
+   * notice the very first source arriving without the user reloading.
+   */
+  refreshInterval?: number;
 }
 
 export interface CreateSourceInput {
@@ -131,6 +137,14 @@ export function useSourcesSwr(options?: UseSourcesOptions) {
       // Freshness comes from explicit mutate() after create/update/delete;
       // focus/reconnect revalidation stays disabled per the global SWR policy.
       dedupingInterval: 5000,
+      // Opt-in only. dedupingInterval would swallow a shorter interval, so
+      // drop it to the poll rate when a caller asks to poll.
+      ...(options?.refreshInterval
+        ? {
+            refreshInterval: options.refreshInterval,
+            dedupingInterval: Math.min(5000, options.refreshInterval),
+          }
+        : {}),
     },
   );
 
