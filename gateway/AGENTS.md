@@ -20,4 +20,4 @@ clickhouse).
 
 Deep dives: `README.md` (run/deploy) + `ARCHITECTURE.md` (protocols, auth, security model).
 Workspace map: `../ARCHITECTURE.md`; canonical hosts/terms: `../GLOSSARY.md`; verified
-component graph: `../graph/`.
+component map: see each service's AGENTS.md.
