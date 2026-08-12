@@ -7,6 +7,8 @@ full agent-facing reference lives at https://plexus.company/agent.md.
 from typing import Literal
 
 from app.core.config import settings
+from mcp.types import ToolAnnotations
+
 from app.mcp.server import mcp
 
 _COMMON = """
@@ -73,7 +75,7 @@ so the API key stays server-side.
 """ + _COMMON
 
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(title="Get instrumentation guide", readOnlyHint=True))
 async def get_instrumentation_guide(language: Literal["python", "typescript"]) -> str:
     """Get the guide for instrumenting an app with the Plexus SDK.
 

@@ -7,6 +7,8 @@ from typing import Literal
 from app.mcp._window import parse_window
 from app.mcp.auth import current_auth
 from app.mcp.runtime import get as services
+from mcp.types import ToolAnnotations
+
 from app.mcp.server import mcp
 from app.services.clickhouse import INTERVALS, auto_interval
 
@@ -17,7 +19,7 @@ def _org() -> str:
     return current_auth.get().org_id
 
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(title="List sources", readOnlyHint=True))
 async def list_sources(status: Literal["online", "offline"] | None = None) -> dict:
     """List all telemetry sources (devices) in the org with online status.
 
@@ -44,7 +46,7 @@ async def list_sources(status: Literal["online", "offline"] | None = None) -> di
     }
 
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(title="Get source status", readOnlyHint=True))
 async def get_source(source_id: str) -> dict:
     """Get one source's online status and last-seen time.
 
@@ -62,7 +64,7 @@ async def get_source(source_id: str) -> dict:
     return {"source_id": source_id, "online": online, "last_seen_ms": last_seen_ms}
 
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(title="List source metrics", readOnlyHint=True))
 async def list_source_metrics(source_id: str) -> dict:
     """List every distinct metric name a source has ever reported.
 
@@ -74,7 +76,7 @@ async def list_source_metrics(source_id: str) -> dict:
     return {"metrics": metrics}
 
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(title="Get latest metric values", readOnlyHint=True))
 async def get_latest_metrics(source_id: str) -> dict:
     """Get the most recent value of every metric on a source (last hour).
 
@@ -84,7 +86,7 @@ async def get_latest_metrics(source_id: str) -> dict:
     return {"metrics": metrics}
 
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(title="Query metric history", readOnlyHint=True))
 async def query_metrics(
     source_id: str,
     metrics: str | None = None,
@@ -123,7 +125,7 @@ async def query_metrics(
     }
 
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(title="Get logs", readOnlyHint=True))
 async def get_logs(
     source_id: str,
     tail: int | None = None,
@@ -149,7 +151,7 @@ async def get_logs(
     return {"events": events, "truncated": len(events) >= limit}
 
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(title="Get fleet health", readOnlyHint=True))
 async def fleet_health() -> dict:
     """Get org-wide fleet health: total known sources and how many are online now."""
     svc = services()
@@ -160,7 +162,7 @@ async def fleet_health() -> dict:
     return {"sources_total": sources_total, "sources_online": len(online_sources)}
 
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(title="Compare a metric across the fleet", readOnlyHint=True))
 async def fleet_metrics(
     metric: str,
     last: str | None = None,

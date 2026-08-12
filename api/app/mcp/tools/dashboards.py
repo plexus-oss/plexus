@@ -14,6 +14,8 @@ import httpx
 from app.core.config import settings
 from app.mcp.auth import current_auth
 from app.mcp.runtime import get as services
+from mcp.types import ToolAnnotations
+
 from app.mcp.server import mcp
 
 # Source of truth: frontend/lib/panels/registry.ts PANEL_TYPES. Keep in sync.
@@ -115,7 +117,7 @@ def _build_config(panels: list[dict], time_range: dict | None) -> dict:
     }
 
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(title="List dashboards", readOnlyHint=True))
 async def list_dashboards() -> dict:
     """List the org's dashboards (id, name, description, panel_count)."""
     resp = await services().frontend.get("/api/dashboards", headers=_headers())
@@ -123,7 +125,7 @@ async def list_dashboards() -> dict:
     return resp.json()
 
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(title="Get dashboard", readOnlyHint=True))
 async def get_dashboard(dashboard_id: str) -> dict:
     """Get one dashboard including its full panel config, plus its URL."""
     resp = await services().frontend.get(f"/api/dashboards/{dashboard_id}", headers=_headers())
@@ -133,7 +135,7 @@ async def get_dashboard(dashboard_id: str) -> dict:
     return data
 
 
-@mcp.tool(description="Create a dashboard, optionally with panels." + _PANEL_GUIDE)
+@mcp.tool(description="Create a dashboard, optionally with panels." + _PANEL_GUIDE, annotations=ToolAnnotations(title="Create dashboard", readOnlyHint=False, destructiveHint=False, idempotentHint=False))
 async def create_dashboard(
     name: str,
     description: str | None = None,
@@ -169,7 +171,7 @@ async def create_dashboard(
     return {"id": dashboard_id, "name": name, "panel_count": panel_count, "url": _url(dashboard_id)}
 
 
-@mcp.tool(description="Update a dashboard's name, description, or full config." + _PANEL_GUIDE)
+@mcp.tool(description="Update a dashboard's name, description, or full config." + _PANEL_GUIDE, annotations=ToolAnnotations(title="Update dashboard", readOnlyHint=False, destructiveHint=True, idempotentHint=True))
 async def update_dashboard(
     dashboard_id: str,
     name: str | None = None,

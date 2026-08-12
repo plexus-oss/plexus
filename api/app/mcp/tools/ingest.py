@@ -4,10 +4,12 @@ import time
 
 from app.mcp.auth import current_auth
 from app.mcp.runtime import get as services
+from mcp.types import ToolAnnotations
+
 from app.mcp.server import mcp
 
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(title="Send telemetry", readOnlyHint=False, destructiveHint=False, idempotentHint=False))
 async def send_telemetry(points: list[dict], source_id: str | None = None) -> dict:
     """Send telemetry points to Plexus.
 
