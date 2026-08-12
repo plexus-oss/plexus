@@ -23,6 +23,8 @@ import { toast } from "@/lib/toast-utils";
 import { useHotkeys } from "@/hooks/use-hotkeys";
 import { useRole } from "@/hooks/use-role";
 import { useAvailableMetrics } from "@/hooks/use-telemetry";
+import { useAlerts } from "@/hooks/use-alerts";
+import type { AlertSourceFields } from "@/lib/alerts/event-summary";
 import { ACTION_ADD_DEVICE } from "@/lib/shortcuts";
 
 export default function DevicesPage() {
@@ -44,6 +46,28 @@ export default function DevicesPage() {
   const { sources: realtimeSources } = usePlexusRealtime();
   const { groups } = useSourceGroups();
   const { metricsBySource } = useAvailableMetrics();
+  // Open alerts per source, so the fleet view can show an incident.
+  const { alerts: openAlerts } = useAlerts({
+    status: ["open"],
+    limit: 200,
+    refreshInterval: 30_000,
+  });
+  const alertsBySource = useMemo(() => {
+    const map = new Map<string, { count: number; critical: boolean }>();
+    for (const a of openAlerts) {
+      const keys = [
+        (a as AlertSourceFields).source_slug,
+        a.source_id,
+      ].filter(Boolean) as string[];
+      for (const key of keys) {
+        const entry = map.get(key) ?? { count: 0, critical: false };
+        entry.count += 1;
+        if (a.severity === "critical") entry.critical = true;
+        map.set(key, entry);
+      }
+    }
+    return map;
+  }, [openAlerts]);
 
   useHotkeys(
     [
@@ -106,6 +130,8 @@ export default function DevicesPage() {
         recording:
           (source.config as Record<string, unknown> | null)?.recording === true,
         metricCount,
+        openAlerts: (alertsBySource.get(source.slug) ??
+          alertsBySource.get(source.id)) ?? { count: 0, critical: false },
       };
     }
 
@@ -121,6 +147,7 @@ export default function DevicesPage() {
       location: null,
       _isRegistered: false,
       metricCount,
+      openAlerts: alertsBySource.get(slug) ?? { count: 0, critical: false },
     };
   });
 

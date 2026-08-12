@@ -156,6 +156,10 @@ export default function DeviceDetailPage({ params }: PageProps) {
   }, [onlineSources, source?.slug]);
 
   const isSourceOnline = !!wsSource;
+  // The single truth for "is this device online": a live WS session OR the
+  // server-derived status (last_seen_at within threshold). Batch/HTTP devices
+  // report without holding a WS session — they are online, not "offline".
+  const isOnline = isSourceOnline || source?.status === "online";
   const wsSourceId = wsSource?.source_id;
   const sourceSensors: SensorInfo[] = wsSource?.sensors || [];
   const sourceCameras: CameraInfo[] = wsSource?.cameras || [];
@@ -633,7 +637,7 @@ export default function DeviceDetailPage({ params }: PageProps) {
                   <Card className="p-4">
                     <StreamControl
                       sourceId={wsSourceId || source?.slug || slug}
-                      isSourceOnline={isSourceOnline}
+                      isSourceOnline={isOnline}
                       // Bind the switch to the persisted source.config.recording
                       // (the value the loader actually filters on), not the
                       // live-stream `store` flag which can flip independently
@@ -664,15 +668,11 @@ export default function DeviceDetailPage({ params }: PageProps) {
                       <div
                         className={cn(
                           "h-2 w-2 rounded-full",
-                          isSourceOnline
-                            ? "bg-green-500"
-                            : source.status === "offline"
-                              ? "bg-zinc-400"
-                              : "bg-yellow-500",
+                          isOnline ? "bg-green-500" : "bg-zinc-400",
                         )}
                       />
                       <span className="text-sm capitalize">
-                        {isSourceOnline ? "Online" : source.status}
+                        {isOnline ? "Online" : "Offline"}
                       </span>
                     </div>
                   </div>
@@ -853,11 +853,15 @@ export default function DeviceDetailPage({ params }: PageProps) {
                   <div
                     className={cn(
                       "h-2 w-2 rounded-full",
-                      isSourceOnline ? "bg-green-500" : "bg-zinc-400",
+                      isOnline ? "bg-green-500" : "bg-zinc-400",
                     )}
                   />
                   <span className="text-sm text-muted-foreground">
-                    {isSourceOnline ? "Connected" : "Offline"}
+                    {isSourceOnline
+                      ? "Connected"
+                      : isOnline
+                        ? "Online"
+                        : "Offline"}
                   </span>
                 </div>
                 {canEdit && (

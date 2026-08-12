@@ -733,7 +733,9 @@ export function ChartPanel({
     // The 0-row probe finds the table's real time span. If it exists, the data
     // is simply outside the selected window — say so and offer to jump to it.
     const actualRange = connectionMeta?.actualDataRange;
-    let reason: EmptyStateReason = "no_data";
+    // Live/realtime sources: an empty window is the normal state between
+    // readings for batch reporters — render calm "waiting", not an error.
+    let reason: EmptyStateReason = isConn ? "no_data" : "waiting_for_data";
     if (isConn && connectionMeta) {
       if (connectionMeta.rowCount === 0) {
         reason = actualRange ? "no_data_in_range" : "no_data";

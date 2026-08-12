@@ -968,7 +968,7 @@ export async function deleteFrameRows(
  */
 export async function queryFleetHealth(
   orgId: string,
-  metrics: string[],
+  metrics: string[] | null,
   windowMs: number = HOUR_MS,
 ): Promise<
   Array<{
@@ -999,14 +999,14 @@ export async function queryFleetHealth(
           max(timestamp) AS last_data_at
         FROM telemetry
         WHERE org_id = {orgId:String}
-          AND metric IN {metrics:Array(String)}
+          ${metrics && metrics.length > 0 ? "AND metric IN {metrics:Array(String)}" : ""}
           AND timestamp >= {startTime:DateTime64(3, 'UTC')}
         GROUP BY source_id, metric
         ORDER BY source_id, metric
       `,
       query_params: {
         orgId,
-        metrics,
+        ...(metrics && metrics.length > 0 ? { metrics } : {}),
         startTime: toClickHouseDateTime(startTime),
       },
       format: "JSONEachRow",

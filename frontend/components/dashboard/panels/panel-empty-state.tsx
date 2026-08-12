@@ -7,6 +7,7 @@ import {
 } from "@/lib/timezone";
 import { useFormattedTime } from "@/hooks/use-formatted-time";
 import {
+  Activity,
   Database,
   Clock,
   AlertCircle,
@@ -29,7 +30,8 @@ export type EmptyStateReason =
   | "no_source" // No data source configured
   | "no_metrics" // No metrics selected
   | "transform_failed" // Data exists but couldn't be transformed for chart
-  | "connection_offline"; // Connection source is offline
+  | "connection_offline" // Connection source is offline
+  | "waiting_for_data"; // Live source, nothing in window yet — calm, not an error
 
 interface DataDebugInfo {
   // Query info
@@ -108,6 +110,11 @@ const REASON_CONFIG: Record<
     title: "Connection offline",
     color: "text-destructive",
   },
+  waiting_for_data: {
+    icon: Activity,
+    title: "Waiting for readings",
+    color: "text-muted-foreground",
+  },
 };
 
 export function PanelEmptyState({
@@ -158,6 +165,9 @@ export function PanelEmptyState({
       case "connection_offline":
         return `Connection "${debugInfo?.sourceName || "unknown"}" is offline. Test the connection first.`;
 
+      case "waiting_for_data":
+        return "New readings appear here as they arrive";
+
       default:
         return "No data available";
     }
@@ -167,6 +177,10 @@ export function PanelEmptyState({
     const suggestions: string[] = [];
 
     switch (reason) {
+      case "waiting_for_data":
+        // Quiet is normal for batch/interval reporters — no scary advice.
+        break;
+
       case "no_data":
         if (debugInfo?.sourceType === "connection") {
           suggestions.push("Verify the table has data");
@@ -251,8 +265,8 @@ export function PanelEmptyState({
           )}
       </div>
 
-      {/* Debug Info Toggle */}
-      {debugInfo && (
+      {/* Debug Info Toggle — hidden for the calm waiting state */}
+      {debugInfo && reason !== "waiting_for_data" && (
         <button
           onClick={() => setShowDebug(!showDebug)}
           className="flex items-center gap-1 mt-3 text-[10px] text-muted-foreground hover:text-foreground transition-colors"

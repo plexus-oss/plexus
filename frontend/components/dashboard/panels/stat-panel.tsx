@@ -359,7 +359,7 @@ export function StatPanel({ panel, timeRange }: StatPanelProps) {
   if (!currentValue) {
     return (
       <PanelEmptyState
-        reason="no_data"
+        reason={sourceType === "connection" ? "no_data" : "waiting_for_data"}
         debugInfo={{
           sourceType,
           rowCount: connectionMeta?.rowCount || 0,

@@ -1,6 +1,14 @@
 "use client";
 
-import { useCallback, useMemo, useState, useEffect, useRef, memo } from "react";
+import {
+  useCallback,
+  useMemo,
+  useState,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  memo,
+} from "react";
 import GridLayout, { Layout } from "react-grid-layout";
 import "react-grid-layout/css/styles.css";
 import "react-resizable/css/styles.css";
@@ -95,7 +103,17 @@ export function DashboardGrid({
 }: DashboardGridProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const isFirstLayoutRef = useRef(true);
-  const [containerWidth, setContainerWidth] = useState(1200);
+  // null until measured — RGL positions items in absolute pixels from this
+  // width, so laying out at a guessed 1200 inside a narrower container spills
+  // panels past the right edge on first paint. Measure before painting.
+  const [containerWidth, setContainerWidth] = useState<number | null>(null);
+
+  // Synchronous first measure, before the browser paints the grid.
+  useLayoutEffect(() => {
+    if (containerRef.current) {
+      setContainerWidth(Math.round(containerRef.current.clientWidth));
+    }
+  }, []);
   const [resizeSize, setResizeSize] = useState<{ w: number; h: number } | null>(null);
   const [draggingId, setDraggingId] = useState<string | null>(null);
 
@@ -242,7 +260,12 @@ export function DashboardGrid({
   }
 
   return (
-    <div ref={containerRef} className="w-full" onClick={handleBackgroundClick}>
+    <div
+      ref={containerRef}
+      className="w-full overflow-x-hidden"
+      onClick={handleBackgroundClick}
+    >
+      {containerWidth === null ? null : (
       <GridLayout
         className="layout"
         layout={layout}
@@ -279,6 +302,7 @@ export function DashboardGrid({
           </div>
         ))}
       </GridLayout>
+      )}
       <ResizeIndicator
         visible={!!resizeSize}
         width={resizeSize?.w ?? 0}

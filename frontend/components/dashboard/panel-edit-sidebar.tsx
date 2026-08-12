@@ -134,8 +134,18 @@ export function PanelEditSidebar({
   };
 
   const handleTypeChange = (newType: PanelType) => {
+    const allTypes = PANEL_CATEGORIES.flatMap((c) => c.types);
+    const oldLabel = allTypes.find((t) => t.value === panelType)?.label;
+    const newLabel = allTypes.find((t) => t.value === newType)?.label;
+    const updates: Partial<Panel> = { type: newType };
+    // Titles default to the type's label; if the user never customized it,
+    // follow the type — a data grid titled "Line" reads as a bug.
+    if (oldLabel && newLabel && title.trim() === oldLabel) {
+      updates.title = newLabel;
+      setTitle(newLabel);
+    }
     setPanelType(newType);
-    handleUpdate({ type: newType });
+    handleUpdate(updates);
     setTypePickerOpen(false);
   };
 

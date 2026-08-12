@@ -29,6 +29,10 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import type { AlertStatus } from "@/lib/db/types";
+import {
+  alertSummary,
+  type AlertSourceFields,
+} from "@/lib/alerts/event-summary";
 import { EntityActions } from "@/components/ui/entity-actions";
 import { AlertStoryPanel } from "@/components/alerts/alert-story-panel";
 import { useRole } from "@/hooks/use-role";
@@ -117,11 +121,15 @@ export default function AlertsPage() {
   const filteredAlerts = useMemo(() => {
     if (!search) return alerts;
     const searchLower = search.toLowerCase();
-    return alerts.filter(
-      (alert) =>
+    return alerts.filter((alert) => {
+      const src = alert as AlertSourceFields;
+      return (
         alert.metric.toLowerCase().includes(searchLower) ||
-        alert.trigger_type.toLowerCase().includes(searchLower),
-    );
+        alert.trigger_type.toLowerCase().includes(searchLower) ||
+        (src.source_slug ?? "").toLowerCase().includes(searchLower) ||
+        (src.source_name ?? "").toLowerCase().includes(searchLower)
+      );
+    });
   }, [alerts, search]);
 
   const handleAction = useCallback(
@@ -230,7 +238,7 @@ export default function AlertsPage() {
                         Alert
                       </TableHead>
                       <TableHead className="text-left text-xs font-medium text-muted-foreground px-3 py-1.5">
-                        Value
+                        Source
                       </TableHead>
                       <TableHead className="text-left text-xs font-medium text-muted-foreground px-3 py-1.5">
                         Triggered
@@ -300,29 +308,18 @@ export default function AlertsPage() {
                                   )}
                                   aria-label={status.label}
                                 />
-                                <span className="text-xs font-mono truncate max-w-[260px]">
-                                  {alert.metric}
-                                </span>
-                                <span className="text-[10px] text-muted-foreground truncate">
-                                  {alert.trigger_type === "event"
-                                    ? "event"
-                                    : `${alert.bound ?? ""} limit`}
+                                <span className="text-xs truncate max-w-[420px]">
+                                  {alertSummary(alert)}
                                 </span>
                               </div>
                             </TableCell>
 
-                            {/* Value */}
+                            {/* Source */}
                             <TableCell className="px-3 py-1.5">
-                              <span className="text-xs font-mono tabular-nums">
-                                {typeof alert.value === "number"
-                                  ? alert.value.toFixed(2)
-                                  : alert.value}
-                                {alert.threshold && (
-                                  <span className="text-muted-foreground">
-                                    {" "}
-                                    / {alert.threshold}
-                                  </span>
-                                )}
+                              <span className="text-xs font-mono text-muted-foreground truncate max-w-[180px] inline-block align-middle">
+                                {(alert as AlertSourceFields).source_name ||
+                                  (alert as AlertSourceFields).source_slug ||
+                                  "—"}
                               </span>
                             </TableCell>
 

@@ -2,16 +2,10 @@
 
 import { useState, useMemo } from "react";
 import { EmptyState } from "@/components/ui/empty-state";
-import { DeviceModeBadge } from "@/components/device/device-mode-badge";
 import { Spinner } from "@/components/ui/spinner";
-import { Server, Plus } from "lucide-react";
+import { Server, Plus, AlertTriangle } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 import { Checkbox } from "@/components/ui/checkbox";
-import {
-  Tooltip,
-  TooltipTrigger,
-  TooltipContent,
-} from "@/components/ui/tooltip";
 import { Button } from "@/components/ui/button";
 import { EntityActions } from "@/components/ui/entity-actions";
 import { useRole } from "@/hooks/use-role";
@@ -40,6 +34,7 @@ interface ExtendedSource {
   _isRegistered?: boolean;
   recording?: boolean;
   metricCount?: number;
+  openAlerts?: { count: number; critical: boolean };
 }
 
 interface SourceListProps {
@@ -170,10 +165,7 @@ export function SourceList({
               Device
             </TableHead>
             <TableHead className="text-left text-[10px] font-medium text-muted-foreground px-3 py-2">
-              Type
-            </TableHead>
-            <TableHead className="text-left text-[10px] font-medium text-muted-foreground px-3 py-2">
-              Storage
+              Alerts
             </TableHead>
             <TableHead className="text-left text-[10px] font-medium text-muted-foreground px-3 py-2">
               Last Seen
@@ -279,65 +271,21 @@ export function SourceList({
                   </div>
                 </TableCell>
                 <TableCell className="px-3 py-2">
-                  <span className="text-xs text-muted-foreground">
-                    {source.device_type ? (
-                      <span className="inline-flex items-center gap-1">
-                        {source.device_type}
-                        {!!(source.metadata as Record<string, unknown> | null)
-                          ?.ai_classification && (
-                          <Tooltip>
-                            <TooltipTrigger asChild>
-                              <span className="text-[9px] px-1 py-0.5 rounded bg-violet-500/15 text-violet-600 dark:text-violet-400 font-medium cursor-default">
-                                AI
-                              </span>
-                            </TooltipTrigger>
-                            <TooltipContent>
-                              {
-                                (() => {
-                                  const cls = (
-                                    source.metadata as Record<string, unknown>
-                                  )?.ai_classification as
-                                    | Record<string, unknown>
-                                    | undefined;
-                                  if (!cls) return "AI classified";
-                                  return `${Math.round((cls.confidence as number) * 100)}% confidence — ${cls.reasoning as string}`;
-                                })() as string
-                              }
-                            </TooltipContent>
-                          </Tooltip>
-                        )}
-                      </span>
-                    ) : (
-                      "—"
-                    )}
-                  </span>
-                </TableCell>
-                <TableCell className="px-3 py-2">
-                  {(() => {
-                    const meta = source.metadata as Record<
-                      string,
-                      unknown
-                    > | null;
-                    const linked = meta?.linked_connections;
-                    const linkedCount = Array.isArray(linked)
-                      ? linked.length
-                      : 0;
-                    const badge = (
-                      <DeviceModeBadge
-                        deviceType={source.device_type}
-                        recording={!!source.recording}
-                        status={source.status}
-                        linkedCount={linkedCount}
-                      />
-                    );
-                    return (
-                      badge ?? (
-                        <span className="text-[10px] text-muted-foreground">
-                          —
-                        </span>
-                      )
-                    );
-                  })()}
+                  {source.openAlerts && source.openAlerts.count > 0 ? (
+                    <span
+                      className={cn(
+                        "inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-medium tabular-nums",
+                        source.openAlerts.critical
+                          ? "bg-red-500/10 text-red-500"
+                          : "bg-amber-500/10 text-amber-500",
+                      )}
+                    >
+                      <AlertTriangle className="h-2.5 w-2.5" />
+                      {source.openAlerts.count}
+                    </span>
+                  ) : (
+                    <span className="text-[10px] text-muted-foreground">—</span>
+                  )}
                 </TableCell>
                 <TableCell className="px-3 py-2">
                   <span className="text-[10px] text-muted-foreground">

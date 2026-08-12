@@ -8,6 +8,7 @@
 
 import { NextResponse } from "next/server";
 import { withDualAuth, requirePermission } from "@/lib/api/with-auth";
+import { deriveDeviceStatus } from "@/lib/sources/status";
 import { findSourceByRef } from "@/lib/api/find-source";
 import { sourceQueries, sourceAssociationQueries } from "@/lib/db";
 import { adminSourceQueries } from "@/lib/db/server";
@@ -35,18 +36,12 @@ export const GET = withDualAuth(
     "view",
   );
 
-  // Compute live status for devices
-  if (source.source_type === "device" && source.last_seen_at) {
-    const now = Date.now();
-    const ONLINE_THRESHOLD_MS = 5 * 60 * 1000;
-    const lastSeenMs = new Date(source.last_seen_at).getTime();
-    const isOnline = now - lastSeenMs < ONLINE_THRESHOLD_MS;
-    return NextResponse.json({
-      source: { ...source, status: isOnline ? "online" : "offline" },
-    });
-  }
-
-  return NextResponse.json({ source });
+  // Compute live status for devices — same derivation as the list route
+  // (satellite/discovered rules included), so no surface can disagree.
+  const derived = deriveDeviceStatus(source);
+  return NextResponse.json({
+    source: derived ? { ...source, status: derived } : source,
+  });
 });
 
 // PATCH /api/sources/[id]

@@ -38,56 +38,7 @@ import type {
 // Business Logic
 // =============================================================================
 
-const ONLINE_THRESHOLD_MS = 5 * 60 * 1000; // 5 minutes
-// Discovered devices are fed by the discovery poll loop, not a live stream —
-// give them a full hour before flipping offline.
-const DISCOVERED_ONLINE_THRESHOLD_MS = 60 * 60 * 1000;
-
-/**
- * Enrich device sources with computed online/offline status
- * based on last_seen_at timestamp.
- */
-function enrichDeviceStatus<
-  T extends {
-    source_type: string;
-    last_seen_at: string | null;
-    device_type?: string | null;
-    metadata?: unknown;
-  },
->(sources: T[]): T[] {
-  const now = Date.now();
-  return sources.map((source) => {
-    if (source.source_type === "device") {
-      // Satellites don't stream telemetry — always "online"
-      if (source.device_type === "satellite") {
-        return { ...source, status: "online" };
-      }
-      // Auto-discovered devices (rows sliced out of a connection table):
-      // online iff the discovery loop has seen them within the last hour.
-      const metadata =
-        source.metadata &&
-        typeof source.metadata === "object" &&
-        !Array.isArray(source.metadata)
-          ? (source.metadata as Record<string, unknown>)
-          : null;
-      if (metadata?.discovered_from) {
-        const lastSeenMs = source.last_seen_at
-          ? new Date(source.last_seen_at).getTime()
-          : NaN;
-        const isOnline =
-          Number.isFinite(lastSeenMs) &&
-          now - lastSeenMs < DISCOVERED_ONLINE_THRESHOLD_MS;
-        return { ...source, status: isOnline ? "online" : "offline" };
-      }
-      if (source.last_seen_at) {
-        const lastSeenMs = new Date(source.last_seen_at).getTime();
-        const isOnline = now - lastSeenMs < ONLINE_THRESHOLD_MS;
-        return { ...source, status: isOnline ? "online" : "offline" };
-      }
-    }
-    return source;
-  });
-}
+import { enrichDeviceStatus } from "@/lib/sources/status";
 
 // =============================================================================
 // Route Handlers
@@ -152,7 +103,7 @@ export const GET = withDualAuth(
       }
     }
 
-    if (isList) sources = enrichDeviceStatus(sources);
+    sources = enrichDeviceStatus(sources);
 
     return NextResponse.json({ sources });
   },

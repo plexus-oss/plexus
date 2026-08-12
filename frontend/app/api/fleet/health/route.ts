@@ -10,18 +10,13 @@ import { queryFleetHealth } from "@/lib/db/clickhouse";
 import { cachedJson } from "@/lib/utils";
 import { filterAccessibleSlugs } from "@/lib/access/sources";
 
-const HEALTH_METRICS = [
-  "battery",
-  "cpu",
-  "error_count",
-  "temperature",
-  "memory",
-];
-
 export const GET = withDualAuth(
   async (_req, { orgId, userId, orgRole, isApiKeyAuth }) => {
-  // Single efficient GROUP BY query instead of fetching 50K rows
-  const rows = await queryFleetHealth(orgId, HEALTH_METRICS, 3600000);
+  // Single efficient GROUP BY query instead of fetching 50K rows.
+  // All metrics count — a device streaming only `pressure` or `rpm` is
+  // reporting; filtering to a hard-coded metric list made healthy fleets
+  // read "0/N reporting" on the home screen.
+  const rows = await queryFleetHealth(orgId, null, 3600000);
 
   // Group by source
   const sourceMap = new Map<

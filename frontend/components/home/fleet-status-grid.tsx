@@ -58,16 +58,24 @@ export function FleetStatusGrid() {
   const { alerts } = useAlerts({ status: "open" });
   const { summary, fleet } = useFleetHealth();
 
-  const onlineCount = sources.filter((s) => s.status === "online").length;
-  const totalDevices = sources.length;
+  // Devices only — connections manage their own health and were inflating
+  // the denominator ("0/13 reporting" while every device was green).
+  const deviceSources = sources.filter((s) => s.source_type === "device");
+  const onlineCount = deviceSources.filter(
+    (s) => s.status === "online",
+  ).length;
+  const totalDevices = deviceSources.length;
 
   const criticalAlerts = alerts.filter((a) => a.severity === "critical").length;
   const warningAlerts = alerts.filter((a) => a.severity === "warning").length;
   const hasCritical = criticalAlerts > 0;
 
-  // Compute data health: % of devices that have reported data
-  const reportingDevices = fleet.filter(
-    (f) => f.point_count > 0,
+  // Data health: % of devices with points landed in the last hour (any metric).
+  const reportingSlugs = new Set(
+    fleet.filter((f) => f.point_count > 0).map((f) => f.source_id),
+  );
+  const reportingDevices = deviceSources.filter(
+    (s) => reportingSlugs.has(s.slug) || s.device_type === "satellite",
   ).length;
   const dataHealth =
     totalDevices > 0 ? Math.round((reportingDevices / totalDevices) * 100) : 0;
