@@ -11,6 +11,10 @@ from app.api.v1 import router as v1_router
 from app.core.config import settings
 from app.core.database import engine
 from app.core.dependencies import require_internal
+from app.mcp import runtime as mcp_runtime
+from app.mcp.auth import McpAuthMiddleware
+from app.mcp.mount import McpPathMiddleware
+from app.mcp.server import mcp
 from app.services.clickhouse import ClickHouseService
 from app.services.gateway import GatewayService
 
@@ -25,14 +29,25 @@ async def lifespan(app: FastAPI):
 
     app.state.gateway = GatewayService()
 
-    yield
+    mcp_runtime.init(app.state)
+    # Starlette's Mount never runs a sub-app's lifespan, and the MCP session
+    # manager may be entered exactly once per process — so it lives here.
+    async with mcp.session_manager.run():
+        yield
 
+    await mcp_runtime.aclose()
     await app.state.clickhouse.aclose()
     await app.state.gateway.aclose()
     await app.state.redis.aclose()
 
 
 app = FastAPI(title="Plexus Data API", version="0.1.0", lifespan=lifespan)
+
+# MCP endpoint (Streamable HTTP, stateless), served at exactly /mcp — a plain
+# Mount would 307 bare /mcp to /mcp/. Bearer plx_ auth happens in the wrapping
+# middleware; neither appears in openapi.json. CORS is added after, so it
+# stays outermost and still covers /mcp preflights.
+app.add_middleware(McpPathMiddleware, mcp_app=McpAuthMiddleware(mcp.streamable_http_app()))
 
 app.add_middleware(
     CORSMiddleware,

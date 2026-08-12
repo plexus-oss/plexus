@@ -50,6 +50,20 @@ class GatewayService:
         await redis.set(cache_key, json.dumps(sources), ex=_ONLINE_SOURCES_TTL)
         return sources
 
+    async def ingest(self, api_key: str, source_id: str | None, points: list[dict]) -> dict:
+        """Relay a telemetry batch to the gateway's public /ingest with the
+        caller's own key — the gateway enforces the write scope (403)."""
+        resp = await self._client.post(
+            "/ingest",
+            json={"source_id": source_id, "points": points},
+            headers={"x-api-key": api_key},
+        )
+        if resp.status_code == 403:
+            raise ValueError("API key lacks write scope — create a key with write access")
+        if resp.status_code >= 400:
+            raise ValueError(f"ingest failed ({resp.status_code}): {resp.text[:300]}")
+        return resp.json()
+
     async def send_command(self, org_id: str, source_id: str, command: str, params: dict) -> bool:
         headers = {}
         if settings.internal_secret:

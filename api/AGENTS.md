@@ -15,6 +15,19 @@ Routing is settled: `/v1/sources/*` is canonical (`app/api/v1/sources.py`);
 unlike a 301). WebSocket streams have **no** `/v1/devices` alias — use `/v1/sources/...`
 directly. Matches `../GLOSSARY.md`.
 
+**MCP server**: `POST /mcp` is a stateless Streamable HTTP MCP endpoint
+(`app/mcp/`, official `mcp` SDK, `json_response=True` — required, the Dockerfile runs
+2 uvicorn workers). Auth is `Authorization: Bearer plx_...` validated by
+`app/mcp/auth.py` (mirrors `require_auth`: 401/402/dev_mode); the raw key is kept in a
+contextvar because the dashboard tools proxy the frontend's `/api/dashboards*` routes
+and `send_telemetry` relays to the gateway's `/ingest`, both as the caller. Served at
+exactly `/mcp` via `app/mcp/mount.py` (a Starlette Mount would 307 to `/mcp/`); the MCP
+session manager runs inside the app lifespan. **Deliberately absent from
+`openapi.json`** (mounts are schema-invisible — regenerate and expect zero diff).
+Tool modules: `app/mcp/tools/*.py`; the panel-type allowlist in `tools/dashboards.py`
+must stay in sync with `frontend/lib/panels/registry.ts`. Tests: `tests/`
+(`uv run --extra dev pytest`).
+
 Known debt: the WS auth + gateway-proxy blocks are triplicated across
 `metrics.py` / `logs.py` / `video.py` — left as-is (no test coverage); consolidate
 only with tests in hand.
