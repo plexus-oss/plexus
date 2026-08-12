@@ -1,26 +1,34 @@
-name: CI
+name: gateway-ci
+
+# Deterministic gates for the gateway: gofmt + vet + build + race tests, plus
+# the //go:build integration suite against a real Redis.
 
 on:
+  pull_request:
+    paths: ["gateway/**"]
   push:
     branches: [main]
-  pull_request:
+    paths: ["gateway/**"]
 
-# Cancel superseded runs on the same ref (e.g. rapid pushes to a PR).
 concurrency:
-  group: ci-${{ github.ref }}
+  group: gateway-ci-${{ github.ref }}
   cancel-in-progress: true
+
+defaults:
+  run:
+    working-directory: gateway
 
 jobs:
   test:
     name: build · vet · test
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - uses: actions/setup-go@v5
         with:
-          go-version-file: go.mod # stays in sync with the toolchain in go.mod
-          cache: true
+          go-version-file: gateway/go.mod # stays in sync with the toolchain in go.mod
+          cache-dependency-path: gateway/go.sum
 
       - name: gofmt
         run: |
@@ -57,12 +65,12 @@ jobs:
           --health-timeout 2s
           --health-retries 5
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - uses: actions/setup-go@v5
         with:
-          go-version-file: go.mod
-          cache: true
+          go-version-file: gateway/go.mod
+          cache-dependency-path: gateway/go.sum
 
       # Runs the //go:build integration tests (real Redis at localhost:6379)
       # alongside the unit tests.

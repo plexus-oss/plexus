@@ -65,15 +65,15 @@ type AlertInstance struct {
 	LastDist  DistSnapshot
 
 	// Stats fields — populated for threshold/outlier rules only.
-	OrgID          string       // for rule lookup in /stats endpoint
-	TriggerValue   float64      // value at first breach, frozen at open
-	PeakValue      float64      // most extreme value seen (direction-aware)
-	PeakZScore     *float64     // highest |z-score| seen (outlier only)
-	RecoveryValue  *float64     // value at most recent OPEN→CLOSING transition
-	RetriggerCount int          // triggered evals after the initial open
-	DataPointCount int          // every ProcessEvaluation call after open (incl. open)
-	OpenDist       DistSnapshot // EWMA snapshot frozen at open
-	BreachDirection int8        // +1 = max violation, -1 = min violation, 0 = outlier
+	OrgID           string       // for rule lookup in /stats endpoint
+	TriggerValue    float64      // value at first breach, frozen at open
+	PeakValue       float64      // most extreme value seen (direction-aware)
+	PeakZScore      *float64     // highest |z-score| seen (outlier only)
+	RecoveryValue   *float64     // value at most recent OPEN→CLOSING transition
+	RetriggerCount  int          // triggered evals after the initial open
+	DataPointCount  int          // every ProcessEvaluation call after open (incl. open)
+	OpenDist        DistSnapshot // EWMA snapshot frozen at open
+	BreachDirection int8         // +1 = max violation, -1 = min violation, 0 = outlier
 }
 
 // Transition represents a state change to be sent to Next.js.
@@ -88,7 +88,7 @@ type Transition struct {
 	ZScore       *float64     `json:"z_score,omitempty"`
 	Severity     string       `json:"severity"`
 	Distribution DistSnapshot `json:"distribution"`
-	Timestamp    int64        `json:"timestamp"` // unix seconds
+	Timestamp    int64        `json:"timestamp"`       // unix seconds
 	Stats        *AlertStats  `json:"stats,omitempty"` // closed transitions only, threshold/outlier
 }
 
@@ -211,11 +211,11 @@ func newAlertInstance(rule *AlertRule, orgID, sourceID, metric string, eval Eval
 		LastDist:      dist,
 	}
 	if isStatsRule(rule) {
-		inst.TriggerValue    = eval.Value
-		inst.PeakValue       = eval.Value
-		inst.OpenDist        = dist
+		inst.TriggerValue = eval.Value
+		inst.PeakValue = eval.Value
+		inst.OpenDist = dist
 		inst.BreachDirection = breachDirection(rule, eval)
-		inst.DataPointCount  = 1
+		inst.DataPointCount = 1
 		if eval.ZScore != nil {
 			z := *eval.ZScore
 			inst.PeakZScore = &z

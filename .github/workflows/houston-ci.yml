@@ -1,0 +1,50 @@
+name: houston-ci
+
+# Deterministic gates for the alert engine: gofmt + vet + build + race tests.
+# All tests are hermetic (no Redis/ClickHouse needed — error classification
+# and engine logic are unit-tested against fakes).
+
+on:
+  pull_request:
+    paths: ["houston/**"]
+  push:
+    branches: [main]
+    paths: ["houston/**"]
+
+concurrency:
+  group: houston-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    working-directory: houston
+
+jobs:
+  test:
+    name: build · vet · test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: houston/go.mod
+          cache-dependency-path: houston/go.sum
+
+      - name: gofmt
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "These files are not gofmt'd — run 'gofmt -w .':"
+            echo "$unformatted"
+            exit 1
+          fi
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: build
+        run: go build ./...
+
+      - name: test
+        run: go test -race ./...

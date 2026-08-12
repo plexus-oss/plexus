@@ -1,29 +1,39 @@
 name: db-schema
 
-# Fails the build when lib/db/schema.ts has drifted ahead of the committed
-# Drizzle migrations — i.e. someone changed the schema (often via
+# Fails the build when frontend/lib/db/schema.ts has drifted ahead of the
+# committed Drizzle migrations — i.e. someone changed the schema (often via
 # `drizzle-kit push`) without running `npm run db:generate` and committing the
-# result. Migration-built databases (fresh envs, prod release_command) would
-# silently be missing those columns; this catches it at PR time instead.
+# result. Migration-built databases (fresh envs, prod release_command, the
+# self-host migrate one-shot) would silently be missing those columns; this
+# catches it at PR time instead.
 
 on:
   pull_request:
     paths:
-      - 'lib/db/schema.ts'
-      - 'lib/db/migrations/**'
-      - 'drizzle.config.ts'
+      - "frontend/lib/db/schema.ts"
+      - "frontend/lib/db/migrations/**"
+      - "frontend/drizzle.config.ts"
   push:
     branches: [main]
+    paths:
+      - "frontend/lib/db/schema.ts"
+      - "frontend/lib/db/migrations/**"
+      - "frontend/drizzle.config.ts"
+
+defaults:
+  run:
+    working-directory: frontend
 
 jobs:
   migrations-in-sync:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: npm
+          cache-dependency-path: frontend/package-lock.json
       - run: npm ci
       - name: schema.ts must have a committed migration
         env:

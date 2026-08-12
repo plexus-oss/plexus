@@ -1,0 +1,33 @@
+name: api-ci
+
+# Deterministic gates for the data-api: the pytest suite (MCP tools, MCP auth,
+# OAuth well-known metadata). Hermetic — no Postgres/ClickHouse needed.
+
+on:
+  pull_request:
+    paths: ["api/**"]
+  push:
+    branches: [main]
+    paths: ["api/**"]
+
+concurrency:
+  group: api-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    working-directory: api
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          cache-dependency-glob: api/uv.lock
+
+      - name: test
+        run: uv run --extra dev pytest

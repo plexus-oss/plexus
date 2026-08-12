@@ -18,9 +18,9 @@ import (
 
 // Readiness thresholds — beyond these, /readyz returns 503.
 const (
-	readyMaxSinkIdle    = 5 * time.Minute   // sink with no successful flush this long
-	readyMaxRulesAge    = 15 * time.Minute  // rules snapshot this stale
-	readyMaxQueueDepth  = 10_000            // pending batch size
+	readyMaxSinkIdle   = 5 * time.Minute  // sink with no successful flush this long
+	readyMaxRulesAge   = 15 * time.Minute // rules snapshot this stale
+	readyMaxQueueDepth = 10_000           // pending batch size
 )
 
 // bootstrapState tracks where the rule set came from at startup.

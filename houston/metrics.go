@@ -94,11 +94,43 @@ func (m *Metrics) Registry() *prometheus.Registry {
 	return m.registry
 }
 
-func (m *Metrics) SetRulesActive(n float64)    { if m != nil { m.rulesActive.Set(n) } }
-func (m *Metrics) SetAlertsOpen(n float64)     { if m != nil { m.alertsOpen.Set(n) } }
-func (m *Metrics) IncAlertsFired()             { if m != nil { m.alertsFired.Inc() } }
-func (m *Metrics) IncAlertsClosed()            { if m != nil { m.alertsClosed.Inc() } }
-func (m *Metrics) IncEvaluations()             { if m != nil { m.evaluationsTotal.Inc() } }
-func (m *Metrics) IncNotificationsSent()        { if m != nil { m.notificationsSent.Inc() } }
-func (m *Metrics) IncNotificationsFail()        { if m != nil { m.notificationsFail.Inc() } }
-func (m *Metrics) SetConsumersActive(n float64) { if m != nil { m.consumersActive.Set(n) } }
+func (m *Metrics) SetRulesActive(n float64) {
+	if m != nil {
+		m.rulesActive.Set(n)
+	}
+}
+func (m *Metrics) SetAlertsOpen(n float64) {
+	if m != nil {
+		m.alertsOpen.Set(n)
+	}
+}
+func (m *Metrics) IncAlertsFired() {
+	if m != nil {
+		m.alertsFired.Inc()
+	}
+}
+func (m *Metrics) IncAlertsClosed() {
+	if m != nil {
+		m.alertsClosed.Inc()
+	}
+}
+func (m *Metrics) IncEvaluations() {
+	if m != nil {
+		m.evaluationsTotal.Inc()
+	}
+}
+func (m *Metrics) IncNotificationsSent() {
+	if m != nil {
+		m.notificationsSent.Inc()
+	}
+}
+func (m *Metrics) IncNotificationsFail() {
+	if m != nil {
+		m.notificationsFail.Inc()
+	}
+}
+func (m *Metrics) SetConsumersActive(n float64) {
+	if m != nil {
+		m.consumersActive.Set(n)
+	}
+}

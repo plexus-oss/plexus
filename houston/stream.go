@@ -102,13 +102,13 @@ const (
 )
 
 type OrgConsumer struct {
-	orgID   string
-	redis   *RedisClient
-	rules   *RuleStore
-	dists   *DistributionTracker
-	states  *AlertStateManager
-	metrics *Metrics
-	cfg     ConsumerConfig
+	orgID    string
+	redis    *RedisClient
+	rules    *RuleStore
+	dists    *DistributionTracker
+	states   *AlertStateManager
+	metrics  *Metrics
+	cfg      ConsumerConfig
 	defaults AlertDefaults
 
 	// latestValues tracks the most recent value per (source, metric)

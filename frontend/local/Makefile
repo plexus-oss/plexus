@@ -9,12 +9,12 @@
 #
 # Backend runs in Docker; the frontend runs on the host via `npm run dev` (HMR) —
 # that's a foreground process you stop with Ctrl-C (it doesn't stop the backend).
-# Requires the sibling service repos checked out at the workspace root (../../).
+# Builds the sibling services from this monorepo's root (../../ = the repo root).
 
 WS      := ../..
-# Sibling checkouts the default stack builds from. The recorder is NOT here —
-# it's behind the compose `recorder` profile and needs plexus-private/video-recorder
-# cloned to $(WS)/video-recorder (see docker-compose.dev.yml).
+# Monorepo service dirs the default stack builds from. The recorder is NOT here —
+# it's behind the compose `recorder` profile and needs the internal video-recorder
+# repo cloned to $(WS)/video-recorder (see docker-compose.dev.yml).
 REPOS   := gateway houston api clickhouse
 EXTRAS  ?=
 BASE    := docker compose --env-file .env -f docker-compose.dev.yml
@@ -66,14 +66,12 @@ nuke: clean
 	-docker image rm plexus-dev/gateway:local plexus-dev/ch-loader:local \
 	  plexus-dev/alert-service:local plexus-dev/data-api:local plexus-dev/recorder:local
 
-## Fail early with a clear message if a sibling repo is missing
+## Fail early with a clear message if a service dir is missing (partial checkout)
 check-repos:
 	@missing=""; for r in $(REPOS); do [ -d "$(WS)/$$r" ] || missing="$$missing $$r"; done; \
 	if [ -n "$$missing" ]; then \
-	  echo "✗ missing at workspace root ($(WS)):$$missing"; \
-	  echo "  clone them next to the frontend repo, e.g.:"; \
-	  for r in $$missing; do \
-	    echo "    git clone git@github.com:plexus-private/$$r.git $(WS)/$$r"; \
-	  done; \
+	  echo "✗ missing at the repo root ($(WS)):$$missing"; \
+	  echo "  these are part of this monorepo — your checkout looks partial or you"; \
+	  echo "  moved local/ out of frontend/. Re-clone the repo or restore the dirs."; \
 	  exit 1; \
 	fi

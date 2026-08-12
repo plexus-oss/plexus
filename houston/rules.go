@@ -315,8 +315,8 @@ func (s *RuleStore) writeCache(path string, snap map[string][]AlertRule) {
 }
 
 type cachePayload struct {
-	SavedAt string                   `json:"saved_at"`
-	Orgs    map[string][]AlertRule   `json:"orgs"`
+	SavedAt string                 `json:"saved_at"`
+	Orgs    map[string][]AlertRule `json:"orgs"`
 }
 
 // LoadRulesCache reads a previously-persisted snapshot from disk.
