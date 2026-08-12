@@ -66,9 +66,8 @@ sides in the same commit:
 
 ## Deployment shapes
 
-- **Plexus Cloud**: each service deploys independently to Fly from its own
-  directory (`docs/shipping.md`). The frontend auto-deploys on green `main`
-  CI; everything else is `fly deploy` by hand.
+- **Plexus Cloud**: rides `main` — each service deploys independently to Fly
+  from its own directory; the frontend auto-deploys on green `main` CI.
 - **Self-host**: version tags (`v*`) trigger `release-images`, which publishes
   all five images to ghcr and a signed air-gapped bundle;
   `selfhost/docker-compose.yml` runs the identical stack (plus Postgres,

@@ -554,7 +554,7 @@ Notes on `telemetry`:
 - Points do **not** carry an `alert` field — gateway-side alert annotation
   was removed (see [Alert annotation](#alert-annotation) below).
 - You receive every metric for the org. Filter client-side; per-viewer
-  subscription pushdown is planned (see `PLAN.md` §9).
+  subscription pushdown is planned.
 
 ### Outgoing frames
 

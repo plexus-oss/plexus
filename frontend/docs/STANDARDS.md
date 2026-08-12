@@ -105,7 +105,7 @@ Target shape: **`panels/radar-panel.tsx`** (~150 lines). One `usePanelData` call
 ## 7. Architecture invariants
 
 - **Layering:** route → query → driver. Routes never touch Supabase clients; drivers stay behind `ConnectionDriver` + registry (`lib/db/drivers/`). `lib/access` is the template for any new policy domain (pure decision fns + cached IO + factory).
-- **One registry per concern:** `lib/features.ts` = routes/nav/paid gates; `lib/manifest` = RBAC actions; `lib/billing/capabilities.ts` = tier quotas. No overlapping fields; limits are **enforced in API routes**, not just rendered in the UI.
+- **One registry per concern:** `lib/features.ts` = routes/nav/paid gates; `lib/manifest` = RBAC actions; `lib/licensing/registry.ts` = enterprise entitlements. No overlapping fields; limits are **enforced in API routes**, not just rendered in the UI.
 - **Realtime:** external store + `useSyncExternalStore` with per-key selectors (`hooks/realtime/`, `telemetry-provider.tsx`). Never pipe high-frequency data through React state/context.
 - **Heavy/WebGL components:** `next/dynamic` `ssr:false`, wrapped in an error boundary — one panel crashing must never take down the dashboard.
 - Env vars are read in one config module per domain (the `lib/billing/server.ts` pattern), not scattered `process.env` reads.

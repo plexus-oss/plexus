@@ -2,9 +2,8 @@
 
 Internals of plexus-alert-service. Read this if you're about to change the
 service or debug something non-obvious. For the wire contract with Next.js
-see [CONTRACT.md](./CONTRACT.md); for ops and Fly deploy see
-[DEPLOY.md](./DEPLOY.md); for the system-wide picture (gateway, three
-data paths) see `plexus/gateway/ARCHITECTURE.md`.
+see [CONTRACT.md](./CONTRACT.md); for the system-wide picture (gateway,
+three data paths) see `plexus/gateway/ARCHITECTURE.md`.
 
 ## Pipeline in one picture
 

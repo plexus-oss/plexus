@@ -10,7 +10,7 @@ Read this if you're:
 - debugging a 4xx/5xx between the two services
 
 For what the alert service *does* internally (state machine, consumer lifecycle,
-bootstrap fallback), see `ARCHITECTURE.md`. For deployment, see `DEPLOY.md`.
+bootstrap fallback), see `ARCHITECTURE.md`.
 
 ## Overview
 

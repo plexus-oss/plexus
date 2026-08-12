@@ -20,5 +20,5 @@ the frontend's poll loops.
 
 Tests are hermetic (`go test -race ./...` — no Redis/ClickHouse needed); CI is
 `.github/workflows/houston-ci.yml`. Deep dives: `README.md` (run/deploy),
-`ARCHITECTURE.md`, `CONTRACT.md`, `DEPLOY.md`. Workspace map:
-`../ARCHITECTURE.md`; canonical hosts/terms: `../GLOSSARY.md`.
+`ARCHITECTURE.md`, `CONTRACT.md`. Workspace map: `../ARCHITECTURE.md`;
+canonical hosts/terms: `../GLOSSARY.md`.

@@ -68,8 +68,6 @@ Start with these, in order, depending on why you're here:
 - **[ARCHITECTURE.md](./ARCHITECTURE.md)** — Internals: consumer lifecycle,
   state machine, bootstrap fallback, sinks, `/readyz` semantics. Read this
   before changing the service.
-- **[DEPLOY.md](./DEPLOY.md)** — Fly config, secrets, volumes, rollback.
-  Read this before operating the service in prod.
 
 For the system-wide picture (gateway, three data paths, the full plexus
 telemetry architecture), see `plexus/gateway/ARCHITECTURE.md` — this doc

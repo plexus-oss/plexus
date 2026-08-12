@@ -198,7 +198,7 @@ wired to scale horizontally; the sequence is:
    Pending Entries List — enable the `XAUTOCLAIM` sweep (see below) so a dead
    replica's unacked work is reclaimed, then `fly scale count 2`. The old
    `LOADER_SHARD_ID` / `LOADER_SHARD_COUNT` (and the never-implemented
-   `CH_HOSTS`) hash-by-org approach has been removed — see `loader/SCALING.md`.
+   `CH_HOSTS`) hash-by-org approach has been removed.
 
 ### ⚠️ Before running more than one loader replica: add `XAUTOCLAIM`
 
@@ -225,7 +225,7 @@ Reshard rule of thumb: don't change loader replica count under load. Drain
 
 - **`XAUTOCLAIM` not implemented.** Fine for a single loader replica
   (pending-mode recovery handles crashes of the same consumer). Required
-  before scaling past one replica — see `loader/SCALING.md`.
+  before scaling past one replica.
 - **Schema evolution is manual.** `server/schema.sql` is reference-only
   and not auto-applied. Changes to a populated cluster require you to
   run the new DDL by hand (e.g., `ALTER TABLE ... ON CLUSTER ...`) and

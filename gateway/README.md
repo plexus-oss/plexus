@@ -184,9 +184,8 @@ those settings are flag-only.
 
 ## Deploying to Fly.io (Stage 1)
 
-First-deploy runbook for a Stage 1 deployment: one gateway machine + one
-self-hosted Redis machine, single region. See `PLAN.md` §6 for the
-progression to higher stages.
+First-deploy runbook for a single-machine deployment: one gateway machine +
+one self-hosted Redis machine, single region.
 
 ### Quickest path: use `deploy.sh`
 
@@ -537,7 +536,6 @@ seconds.
 ## See also
 
 - [ARCHITECTURE.md](./ARCHITECTURE.md) — current-state reference: protocols, auth, security model, per-fanout details, the frontend WS contract, code map.
-- [PLAN.md](./PLAN.md) — forward design: topology/CLUSTER_MODE seam, hosting models, scaling ladder, app portability seam, deferred levers.
 
 ## License
 
