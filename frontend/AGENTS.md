@@ -16,6 +16,19 @@ Deploy: **Fly `plexus-frontend` is canonical** — the background loops in
 `instrumentation.ts` (offline/poll/discovery) need an always-on machine, which
 serverless Vercel can't provide. The Vercel project config is vestigial.
 
+**OAuth 2.1 authorization server** (for the MCP connector at
+`api.plexus.company/mcp`, e.g. claude.ai custom connectors): metadata at
+`/.well-known/oauth-authorization-server`, DCR at `/api/oauth/register`,
+consent page `/oauth/authorize` (session-gated; approve = `/api/oauth/authorize`,
+admin/editor), token exchange `/api/oauth/token` (PKCE S256, public clients
+only). **Access tokens ARE org-scoped `plx_` keys** minted at exchange into
+`api_keys` — billing gating and revocation ride the existing machinery.
+Tables `oauth_clients` / `oauth_authorization_codes`; queries + PKCE in
+`lib/db/queries/oauth.ts`; shared helpers `lib/oauth/http.ts` (these routes
+carry their own CORS — the app has no global CORS). The three anonymous
+endpoints are in middleware's `PUBLIC_ROUTE_PATTERNS`; forgetting that breaks
+them as silent sign-in redirects.
+
 Workspace map: `../ARCHITECTURE.md`; canonical hosts/terms: `../GLOSSARY.md`.
 
 ## Testing

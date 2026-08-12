@@ -1058,6 +1058,70 @@ export const deviceAuthRequests = pgTable(
   ],
 );
 
+// OAuth 2.1 authorization server (MCP connector): dynamically registered
+// clients (RFC 7591) — public clients only, no secrets stored.
+export const oauthClients = pgTable("oauth_clients", {
+  id: uuid().defaultRandom().primaryKey().notNull(), // doubles as client_id
+  client_name: text("client_name").notNull(),
+  redirect_uris: text("redirect_uris").array().notNull(),
+  logo_uri: text("logo_uri"),
+  client_uri: text("client_uri"),
+  token_endpoint_auth_method: text("token_endpoint_auth_method")
+    .default("none")
+    .notNull(),
+  created_at: timestamp("created_at", {
+    withTimezone: true,
+    mode: "string",
+  }).defaultNow(),
+}).enableRLS();
+
+// Single-use authorization codes (10-min TTL). Stored plaintext like
+// device_code: redemption additionally requires the PKCE verifier, of which
+// only the S256 challenge is stored here.
+export const oauthAuthorizationCodes = pgTable(
+  "oauth_authorization_codes",
+  {
+    code: text().primaryKey().notNull(),
+    client_id: uuid("client_id").notNull(),
+    org_id: text("org_id").notNull(),
+    user_id: text("user_id").notNull(),
+    redirect_uri: text("redirect_uri").notNull(),
+    code_challenge: text("code_challenge").notNull(), // S256 only
+    scope: text(),
+    resource: text().notNull(),
+    status: text().default("issued").notNull(),
+    expires_at: timestamp("expires_at", {
+      withTimezone: true,
+      mode: "string",
+    }).notNull(),
+    api_key_id: uuid("api_key_id"),
+    created_at: timestamp("created_at", {
+      withTimezone: true,
+      mode: "string",
+    }).defaultNow(),
+  },
+  (table) => [
+    index("idx_oauth_codes_expires").using(
+      "btree",
+      table.expires_at.asc().nullsLast(),
+    ),
+    foreignKey({
+      columns: [table.client_id],
+      foreignColumns: [oauthClients.id],
+      name: "oauth_authorization_codes_client_id_fkey",
+    }).onDelete("cascade"),
+    foreignKey({
+      columns: [table.api_key_id],
+      foreignColumns: [apiKeys.id],
+      name: "oauth_authorization_codes_api_key_id_fkey",
+    }).onDelete("set null"),
+    check(
+      "oauth_authorization_codes_status_check",
+      sql`status = ANY (ARRAY['issued'::text, 'consumed'::text, 'expired'::text])`,
+    ),
+  ],
+).enableRLS();
+
 export const orgBilling = pgTable("org_billing", {
   org_id: text("org_id").primaryKey().notNull(),
   org_name: text("org_name"),

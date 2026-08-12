@@ -79,6 +79,20 @@ async def health():
     return {"status": "ok"}
 
 
+# OAuth 2.0 Protected Resource Metadata (RFC 9728) for the /mcp endpoint —
+# MCP clients (claude.ai connectors) discover the authorization server here.
+# Both probe paths are served (path-inserted and root); schema-invisible so
+# openapi.json stays byte-identical.
+@app.get("/.well-known/oauth-protected-resource", include_in_schema=False)
+@app.get("/.well-known/oauth-protected-resource/mcp", include_in_schema=False)
+async def oauth_protected_resource():
+    return {
+        "resource": f"{settings.public_url}/mcp",
+        "authorization_servers": [settings.app_url],
+        "bearer_methods_supported": ["header"],
+    }
+
+
 @app.get("/health/system", include_in_schema=False, dependencies=[Depends(require_internal)])
 async def health_system(request: Request):
     redis = request.app.state.redis

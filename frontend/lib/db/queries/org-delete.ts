@@ -38,6 +38,7 @@ import {
   eventMonitors,
   feedback,
   notificationDeliveries,
+  oauthAuthorizationCodes,
   orgBilling,
   orgInvites,
   orgMembers,
@@ -92,6 +93,9 @@ export const ORG_SCOPED_TABLES: OrgScopedTable[] = [
   deviceSchemas,
   columnMetadata,
   deviceAuthRequests,
+  // Before apiKeys: codes FK-reference api_keys (SET NULL), and org deletion
+  // must sweep pending consent grants with everything else.
+  oauthAuthorizationCodes,
   apiKeys,
   aiUsage,
   annotations,

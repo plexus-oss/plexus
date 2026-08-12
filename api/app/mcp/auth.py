@@ -43,13 +43,20 @@ class McpAuthMiddleware:
         else:
             result = await verify_api_key(token)
             if result is None:
+                # resource_metadata points OAuth-capable MCP clients (claude.ai
+                # connectors) at the RFC 9728 document served in app/main.py.
                 resp = JSONResponse(
                     {
                         "error": "invalid_api_key",
                         "message": "Pass a Plexus API key as 'Authorization: Bearer plx_...'",
                     },
                     status_code=401,
-                    headers={"WWW-Authenticate": "Bearer"},
+                    headers={
+                        "WWW-Authenticate": (
+                            "Bearer resource_metadata="
+                            f'"{settings.public_url}/.well-known/oauth-protected-resource/mcp"'
+                        )
+                    },
                 )
                 return await resp(scope, receive, send)
             org_id, access_enabled = result

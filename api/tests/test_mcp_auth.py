@@ -27,7 +27,10 @@ async def test_missing_header_401(client, monkeypatch):
     monkeypatch.setattr(mcp_auth.settings, "dev_mode", False)
     resp = await client.post("/")
     assert resp.status_code == 401
-    assert resp.headers["www-authenticate"] == "Bearer"
+    www = resp.headers["www-authenticate"]
+    assert www.startswith("Bearer ")
+    assert 'resource_metadata="' in www
+    assert www.endswith('/.well-known/oauth-protected-resource/mcp"')
     assert resp.json()["error"] == "invalid_api_key"
 
 
