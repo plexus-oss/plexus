@@ -17,6 +17,15 @@ import "server-only";
 import { promises as dns } from "node:dns";
 import net from "node:net";
 
+// SSRF via user-supplied hosts is a MULTI-TENANT concern: on the hosted cloud a
+// tenant must not reach Plexus's internal services or cloud metadata. On a
+// single-tenant self-host the operator IS the only user and legitimately points
+// connections at private/localhost databases, so blocking private ranges there
+// is a regression, not a fix. Hence this guard is OFF by default and the cloud
+// opts in with PLEXUS_BLOCK_PRIVATE_EGRESS=1. When off, URL scheme validation
+// still runs but private-address enforcement is skipped.
+const BLOCK_PRIVATE_EGRESS = process.env.PLEXUS_BLOCK_PRIVATE_EGRESS === "1";
+
 export class SsrfError extends Error {
   constructor(message: string) {
     super(message);
@@ -154,6 +163,9 @@ export async function assertPublicUrl(
     );
   }
 
+  // Private-address enforcement is cloud-only (see BLOCK_PRIVATE_EGRESS).
+  if (!BLOCK_PRIVATE_EGRESS) return url;
+
   const host = url.hostname.replace(/^\[|\]$/g, "");
   if (isBlockedHostname(host)) {
     throw new SsrfError("URL host is not permitted");
@@ -167,6 +179,9 @@ export async function assertPublicUrl(
  * a private/loopback/metadata address. Throws SsrfError on violation.
  */
 export async function assertPublicHost(host: string): Promise<void> {
+  // Cloud-only enforcement — self-host/dev connect to private hosts legitimately.
+  if (!BLOCK_PRIVATE_EGRESS) return;
+
   const clean = host.trim().replace(/^\[|\]$/g, "");
   if (!clean) throw new SsrfError("Empty host");
   if (isBlockedHostname(clean)) throw new SsrfError("Host is not permitted");
