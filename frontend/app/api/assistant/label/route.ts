@@ -19,7 +19,11 @@ import { validateBody } from "@/lib/api/validate";
 import { queryTelemetryAdaptive } from "@/lib/db/clickhouse";
 import { filterAccessibleSlugs } from "@/lib/access/sources";
 import { annotationQueries } from "@/lib/db/queries/misc";
-import { sourceContextQueries } from "@/lib/db";
+import {
+  sourceContextQueries,
+  aiLabelRunQueries,
+  type LabelRunObservation,
+} from "@/lib/db";
 import { findSourceByRef } from "@/lib/api/find-source";
 import { OllamaUnavailableError } from "@/lib/ai/label/ollama";
 import {
@@ -32,6 +36,7 @@ import {
   buildLabelPrompt,
   clampObservations,
   clampRemember,
+  computePromptContext,
   summarizeSeries,
   LABEL_RESPONSE_SCHEMA,
   LABEL_SYSTEM_PROMPT,
@@ -108,7 +113,9 @@ export const POST = withDualAuth(
     // enrichment pattern as lib/alerts/trigger.ts. Notes contribute their text
     // body; file/link items contribute only name + description. Sorted
     // newest-first overall so the prompt builder truncates oldest-first.
-    const contextItems: Array<SourceContextItem & { createdAtMs: number }> = [];
+    const contextItems: Array<
+      SourceContextItem & { id: string; createdAtMs: number }
+    > = [];
     try {
       await Promise.all(
         [...slugSet].map(async (slug) => {
@@ -117,6 +124,7 @@ export const POST = withDualAuth(
           const rows = await sourceContextQueries.findBySource(orgId, source.id);
           for (const c of rows) {
             contextItems.push({
+              id: c.id,
               slug,
               name: c.name,
               description: c.description,
@@ -131,26 +139,39 @@ export const POST = withDualAuth(
     }
     contextItems.sort((a, b) => b.createdAtMs - a.createdAtMs);
 
+    const promptContext = contextItems.map(
+      ({ createdAtMs: _createdAtMs, ...item }) => item,
+    );
     const prompt = buildLabelPrompt({
       windowStartMs: body.start,
       windowEndMs: body.end,
       series,
       annotations,
-      context: contextItems.map(({ createdAtMs: _createdAtMs, ...item }) => item),
+      context: promptContext,
     });
+    // The retrieval record: exactly the items buildLabelPrompt kept after
+    // truncation, with the rendered size each contributed.
+    const includedContext = computePromptContext(promptContext).map(
+      ({ item, chars }) => ({ id: item.id, slug: item.slug, name: item.name, chars }),
+    );
 
     let observations;
     let remember;
     let model: string;
     let provider: LabelProvider;
+    let latencyMs: number;
+    let usage: { input_tokens: number; output_tokens: number } | undefined;
     try {
+      const startedAt = Date.now();
       const reply = await runLabelModel({
         system: LABEL_SYSTEM_PROMPT,
         prompt,
         schema: LABEL_RESPONSE_SCHEMA,
       });
+      latencyMs = Date.now() - startedAt;
       model = reply.model;
       provider = reply.provider;
+      usage = reply.usage;
       observations = clampObservations(reply.result, body.start, body.end);
       remember = clampRemember(reply.result);
       // Anthropic usage is billable AI COGS — record it like the Terminal and
@@ -190,7 +211,49 @@ export const POST = withDualAuth(
       }),
     );
 
-    return NextResponse.json({ observations, remember, model });
+    // Persist the run — the full observability record for /intelligence:
+    // retrieval in, proposals out, performance, and (later, via the verdict
+    // route) the human decisions. Awaited so the client always gets a run_id
+    // it can attach verdicts to. Label observations keep their array index;
+    // remember proposals follow at index observations.length + i.
+    const runObservations: LabelRunObservation[] = [
+      ...observations.map((o) => ({
+        label: o.label,
+        note: o.note || null,
+        start_ms: o.start_ms,
+        end_ms: o.end_ms,
+        confidence: o.confidence,
+        kind: "label" as const,
+        verdict: null,
+        verdict_at: null,
+      })),
+      ...remember.map((m) => ({
+        label: m.content,
+        note: null,
+        start_ms: null,
+        end_ms: null,
+        confidence: null,
+        kind: "remember" as const,
+        verdict: null,
+        verdict_at: null,
+      })),
+    ];
+    const run = await aiLabelRunQueries.insert({
+      org_id: orgId,
+      user_id: userId ?? null,
+      provider,
+      model,
+      latency_ms: latencyMs,
+      input_tokens: usage?.input_tokens ?? null,
+      output_tokens: usage?.output_tokens ?? null,
+      metrics,
+      window_start: startDate.toISOString(),
+      window_end: endDate.toISOString(),
+      context_items: includedContext,
+      observations: runObservations,
+    });
+
+    return NextResponse.json({ observations, remember, model, run_id: run.id });
   },
 );
 

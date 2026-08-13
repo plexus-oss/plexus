@@ -203,18 +203,29 @@ export function summarizeSeries(
   };
 }
 
+/** One context item that made it into the prompt, with its rendered size. */
+export interface IncludedContextItem<T extends SourceContextItem> {
+  item: T;
+  /** Characters of the rendered line actually included in the prompt. */
+  chars: number;
+  line: string;
+  /** True when the item's line was cut mid-way to fit the budget. */
+  sliced?: boolean;
+}
+
 /**
- * Render the user-maintained context section: one line per item, newest first,
- * capped at MAX_CONTEXT_CHARS of item text. When over budget the oldest items
- * are dropped (the newest-first prefix is kept) and the cut is noted; a single
- * oversized newest item is sliced rather than dropped.
+ * The truncation decision, exposed: which context items (newest-first) fit in
+ * the MAX_CONTEXT_CHARS budget and at what rendered size. When over budget the
+ * oldest items are dropped (the newest-first prefix is kept); a single
+ * oversized newest item is sliced rather than dropped. `buildLabelPrompt`
+ * renders exactly this selection, so callers can persist it as the retrieval
+ * record of what the model actually saw.
  */
-function renderContextLines(items: SourceContextItem[]): string[] {
-  const lines: string[] = [
-    "Context about these sources (user-maintained — treat as ground truth about the subject):",
-  ];
+export function computePromptContext<T extends SourceContextItem>(
+  items: T[],
+): IncludedContextItem<T>[] {
+  const included: IncludedContextItem<T>[] = [];
   let used = 0;
-  let truncated = false;
   for (const item of items) {
     const body = (item.content ?? item.description ?? "").trim();
     const line = `- [${item.slug}] ${item.name}${body ? `: ${body}` : ""}`
@@ -222,16 +233,31 @@ function renderContextLines(items: SourceContextItem[]): string[] {
       .trim();
     if (used + line.length > MAX_CONTEXT_CHARS) {
       if (used === 0) {
-        lines.push(`${line.slice(0, MAX_CONTEXT_CHARS - 1)}…`);
-        used = MAX_CONTEXT_CHARS;
+        const sliced = `${line.slice(0, MAX_CONTEXT_CHARS - 1)}…`;
+        included.push({ item, chars: sliced.length, line: sliced, sliced: true });
       }
-      truncated = true;
       break;
     }
-    lines.push(line);
+    included.push({ item, chars: line.length, line });
     used += line.length;
   }
-  if (truncated) lines.push("(older context truncated to fit)");
+  return included;
+}
+
+/**
+ * Render the user-maintained context section: one line per item, newest first,
+ * capped at MAX_CONTEXT_CHARS of item text (see computePromptContext). A cut
+ * is noted when items were dropped.
+ */
+function renderContextLines(items: SourceContextItem[]): string[] {
+  const included = computePromptContext(items);
+  const lines: string[] = [
+    "Context about these sources (user-maintained — treat as ground truth about the subject):",
+    ...included.map((i) => i.line),
+  ];
+  if (included.length < items.length || included.some((i) => i.sliced)) {
+    lines.push("(older context truncated to fit)");
+  }
   return lines;
 }
 

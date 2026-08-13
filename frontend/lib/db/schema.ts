@@ -1877,6 +1877,51 @@ export const aiUsage = pgTable(
   ],
 ).enableRLS();
 
+// One row per labeling inference call (POST /api/assistant/label): what went
+// in (metrics, window, retrieved context), what came out (observations,
+// remember proposals), how it performed (provider/model/latency/tokens), and
+// what the human decided (per-observation verdicts — the reinforcement
+// signal). Read by /intelligence. Written awaited by the label route;
+// verdicts are patched into the observations jsonb by the verdict route.
+export const aiLabelRuns = pgTable(
+  "ai_label_runs",
+  {
+    id: uuid().defaultRandom().primaryKey().notNull(),
+    org_id: text("org_id").notNull(),
+    user_id: text("user_id"),
+    created_at: timestamp("created_at", {
+      withTimezone: true,
+      mode: "string",
+    }).defaultNow(),
+    provider: text(),
+    model: text(),
+    latency_ms: integer("latency_ms"),
+    input_tokens: integer("input_tokens"),
+    output_tokens: integer("output_tokens"),
+    // Qualified "slug:metric" keys the run was asked to label.
+    metrics: jsonb(),
+    window_start: timestamp("window_start", {
+      withTimezone: true,
+      mode: "string",
+    }),
+    window_end: timestamp("window_end", { withTimezone: true, mode: "string" }),
+    // Array of {id, slug, name, chars} — the context items actually included
+    // in the prompt after truncation (the retrieval record).
+    context_items: jsonb("context_items"),
+    // Array of {label, note, start_ms, end_ms, confidence, kind, verdict,
+    // verdict_at} — kind is "label"|"remember"; verdict is
+    // null|"applied"|"dismissed".
+    observations: jsonb(),
+  },
+  (table) => [
+    index("ai_label_runs_org_created_idx").using(
+      "btree",
+      table.org_id.asc().nullsLast(),
+      table.created_at.desc().nullsFirst(),
+    ),
+  ],
+);
+
 export const usage = pgTable(
   "usage",
   {

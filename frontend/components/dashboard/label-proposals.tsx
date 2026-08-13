@@ -56,32 +56,48 @@ export function LabelProposals({ metrics, timeWindow, sourceId }: LabelProposals
   const [memories, setMemories] = useState<Memory[] | null>(null);
   const [applyingId, setApplyingId] = useState<number | null>(null);
   const [applyingMemoryId, setApplyingMemoryId] = useState<number | null>(null);
+  // Persisted run this batch of proposals came from. Proposal ids double as
+  // observation indices in the run row (labels first); memories follow at
+  // observationCount + id. Threaded into verdicts so /intelligence can show
+  // the human decision next to what the model proposed.
+  const [runId, setRunId] = useState<string | null>(null);
+  const [observationCount, setObservationCount] = useState(0);
 
-  const sendVerdict = useCallback((p: Proposal, applied: boolean) => {
-    void fetch("/api/assistant/label/verdict", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        kind: "label",
-        label: p.label,
-        start_ms: p.start_ms,
-        end_ms: p.end_ms,
-        applied,
-      }),
-    }).catch(() => {});
-  }, []);
+  const sendVerdict = useCallback(
+    (p: Proposal, applied: boolean) => {
+      void fetch("/api/assistant/label/verdict", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          kind: "label",
+          label: p.label,
+          start_ms: p.start_ms,
+          end_ms: p.end_ms,
+          applied,
+          ...(runId ? { run_id: runId, observation_index: p.id } : {}),
+        }),
+      }).catch(() => {});
+    },
+    [runId],
+  );
 
-  const sendMemoryVerdict = useCallback((m: Memory, applied: boolean) => {
-    void fetch("/api/assistant/label/verdict", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        kind: "remember",
-        label: m.content,
-        applied,
-      }),
-    }).catch(() => {});
-  }, []);
+  const sendMemoryVerdict = useCallback(
+    (m: Memory, applied: boolean) => {
+      void fetch("/api/assistant/label/verdict", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          kind: "remember",
+          label: m.content,
+          applied,
+          ...(runId
+            ? { run_id: runId, observation_index: observationCount + m.id }
+            : {}),
+        }),
+      }).catch(() => {});
+    },
+    [runId, observationCount],
+  );
 
   const run = useCallback(async () => {
     setLoading(true);
@@ -105,8 +121,11 @@ export function LabelProposals({ metrics, timeWindow, sourceId }: LabelProposals
       const data = (await res.json()) as {
         observations: LabelObservation[];
         remember?: RememberProposal[];
+        run_id?: string;
       };
       const remember = data.remember ?? [];
+      setRunId(data.run_id ?? null);
+      setObservationCount(data.observations.length);
       if (data.observations.length === 0 && remember.length === 0) {
         toast.info("No notable features found in this window");
         return;

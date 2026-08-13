@@ -357,6 +357,49 @@ export const sourceContextQueries = {
       )
       .orderBy(desc(sourceContext.created_at))) as SourceContext[];
   },
+
+  /**
+   * Note items with a given name across ALL of an org's sources, joined to
+   * their source for display + linking. Used by /api/intelligence to list
+   * "Model memory" notes (the facts the labeling model asked to remember).
+   */
+  findNotesByName: async (
+    orgId: string,
+    name: string,
+  ): Promise<
+    Array<{
+      id: string;
+      source_id: string;
+      name: string;
+      content: string | null;
+      created_at: string | null;
+      source_slug: string;
+      source_name: string | null;
+      source_type: string;
+    }>
+  > => {
+    return await db
+      .select({
+        id: sourceContext.id,
+        source_id: sourceContext.source_id,
+        name: sourceContext.name,
+        content: sourceContext.content,
+        created_at: sourceContext.created_at,
+        source_slug: sources.slug,
+        source_name: sources.name,
+        source_type: sources.source_type,
+      })
+      .from(sourceContext)
+      .innerJoin(sources, eq(sourceContext.source_id, sources.id))
+      .where(
+        and(
+          eq(sourceContext.org_id, orgId),
+          eq(sourceContext.context_type, "note"),
+          eq(sourceContext.name, name),
+        ),
+      )
+      .orderBy(desc(sourceContext.created_at));
+  },
 };
 
 // =============================================================================

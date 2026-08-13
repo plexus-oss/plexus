@@ -25,6 +25,7 @@ import {
   alerts,
   annotations,
   apiKeys,
+  aiLabelRuns,
   aiUsage,
   columnMetadata,
   dashboardIconAssets,
@@ -97,6 +98,7 @@ export const ORG_SCOPED_TABLES: OrgScopedTable[] = [
   // must sweep pending consent grants with everything else.
   oauthAuthorizationCodes,
   apiKeys,
+  aiLabelRuns,
   aiUsage,
   annotations,
   runs,

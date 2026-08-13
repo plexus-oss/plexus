@@ -46,6 +46,14 @@ export { alertRuleQueries } from "./queries/alert-rules";
 // Terminal conversation history
 export { terminalConversationQueries } from "./queries/terminal-conversations";
 
+// Labeling-model observability (runs + verdicts)
+export { aiLabelRunQueries } from "./queries/ai-label-runs";
+export type {
+  AiLabelRun,
+  LabelRunObservation,
+  LabelRunContextItem,
+} from "./queries/ai-label-runs";
+
 // Integration queries
 export {
   webhookQueries,

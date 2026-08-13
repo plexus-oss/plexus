@@ -290,6 +290,15 @@ export const FEATURE_MANIFEST = {
     actions: [],
   },
 
+  intelligence: {
+    label: "Intelligence",
+    description:
+      "Model observability for the labeling loop — runs, retrieval, verdicts.",
+    category: "observe",
+    routes: ["/intelligence"],
+    actions: [],
+  },
+
 
   // ===========================================================================
   // CONFIGURE

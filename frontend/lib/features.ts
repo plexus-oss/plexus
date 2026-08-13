@@ -20,6 +20,7 @@ import {
   KeyRound,
   Terminal,
   FlaskConical,
+  Brain,
   type LucideIcon,
 } from "lucide-react";
 
@@ -37,6 +38,7 @@ export type FeatureKey =
   | "terminal"
   | "alerts"
   | "events"
+  | "intelligence"
   | "internal";
 
 export type SectionId = "data" | "observe" | "configure";
@@ -114,6 +116,12 @@ export const FEATURES: Record<FeatureKey, Feature> = {
     label: "Events",
     icon: Activity,
     href: "/events",
+    section: "observe",
+  },
+  intelligence: {
+    label: "Intelligence",
+    icon: Brain,
+    href: "/intelligence",
     section: "observe",
   },
 
