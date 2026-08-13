@@ -4,8 +4,8 @@
  * Intelligence — model observability for the labeling loop.
  *
  * One page answering "is the model performing, what is it retrieving, and
- * what are humans teaching it": 7-day stat cards, the recent inference runs
- * (each row opens a read-only detail sheet with the retrieval record and
+ * what are humans teaching it": a 7-day summary strip, the recent inference
+ * runs (each row opens a read-only detail sheet with the retrieval record and
  * per-proposal verdicts), and the model's own memory (context notes it asked
  * to remember, deletable here). Data: GET /api/intelligence.
  */
@@ -14,10 +14,10 @@ import { useState } from "react";
 import Link from "next/link";
 import useSWR from "swr";
 import { format } from "date-fns";
-import { ArrowRight, Brain } from "lucide-react";
+import { ArrowRight, Brain, Sparkles } from "lucide-react";
 import { PageWrapper } from "@/components/ui/page-wrapper";
 import { Card } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
+import { EmptyState } from "@/components/ui/empty-state";
 import { Spinner } from "@/components/ui/spinner";
 import { DeleteButton } from "@/components/ui/delete-button";
 import {
@@ -38,6 +38,7 @@ import {
 import { fetcher } from "@/lib/fetcher";
 import { toast } from "@/lib/toast-utils";
 import { cn } from "@/lib/utils";
+import { formatRelativeShort } from "@/lib/format/relative-time";
 import type { LabelRunStats } from "@/lib/ai/label/run-stats";
 
 // =============================================================================
@@ -164,21 +165,44 @@ export default function IntelligencePage() {
       title="Intelligence"
       description="How the labeling model is performing"
     >
-      {isLoading || !data ? (
-        <div className="flex items-center justify-center h-full">
-          <Spinner className="h-5 w-5 text-muted-foreground" />
+      <div className="flex flex-col h-full">
+        <div className="flex-1 flex flex-col overflow-hidden p-2">
+          {isLoading || !data ? (
+            <div className="flex items-center justify-center h-full">
+              <Spinner className="h-5 w-5 text-muted-foreground" />
+            </div>
+          ) : (
+            <>
+              <SummaryBar stats={data.stats} />
+
+              {/* Runs */}
+              <Card className="flex-1 min-h-0 overflow-hidden">
+                <div className="h-full overflow-auto">
+                  {data.runs.length === 0 ? (
+                    <EmptyState
+                      icon={Sparkles}
+                      title="No runs yet"
+                      description="Use Label on a chart panel to get the first proposals."
+                      className="h-full"
+                    />
+                  ) : (
+                    <RunsTable
+                      runs={data.runs}
+                      sources={data.sources}
+                      onSelect={setSelectedRun}
+                    />
+                  )}
+                </div>
+              </Card>
+
+              <MemorySection
+                memory={data.memory}
+                onDelete={handleDeleteMemory}
+              />
+            </>
+          )}
         </div>
-      ) : (
-        <div className="p-4 space-y-6 max-w-6xl mx-auto">
-          <StatCards stats={data.stats} />
-          <RunsSection
-            runs={data.runs}
-            sources={data.sources}
-            onSelect={setSelectedRun}
-          />
-          <MemorySection memory={data.memory} onDelete={handleDeleteMemory} />
-        </div>
-      )}
+      </div>
 
       <RunDetailSheet
         run={selectedRun}
@@ -192,10 +216,10 @@ export default function IntelligencePage() {
 }
 
 // =============================================================================
-// Stat cards
+// Summary strip (filter-bar idiom — see /runs, /alerts/monitors)
 // =============================================================================
 
-function StatCards({ stats }: { stats: LabelRunStats }) {
+function SummaryBar({ stats }: { stats: LabelRunStats }) {
   const providers = Object.keys(stats.tokensByProvider);
   const tokensNote =
     providers.length > 1
@@ -205,63 +229,56 @@ function StatCards({ stats }: { stats: LabelRunStats }) {
       : null;
 
   return (
-    <div className="grid grid-cols-2 lg:grid-cols-4 gap-2">
-      <StatCard label="Runs (7d)" value={String(stats.runs)} />
-      <StatCard
-        label="Acceptance rate (7d)"
-        value={
-          stats.acceptanceRate == null
-            ? "—"
-            : `${Math.round(stats.acceptanceRate * 100)}%`
-        }
-        note={
-          stats.acceptanceRate == null
-            ? "no verdicts yet"
-            : `${stats.applied} applied · ${stats.dismissed} dismissed`
-        }
+    <div className="flex items-center gap-2 mb-2 flex-wrap">
+      <SummaryStat
+        value={String(stats.runs)}
+        label={stats.runs === 1 ? "run" : "runs"}
       />
-      <StatCard
-        label="Median latency (7d)"
-        value={fmtLatency(stats.medianLatencyMs)}
-      />
-      <StatCard
-        label="Tokens (7d)"
+
+      <div className="w-px h-5 bg-border" />
+
+      {stats.acceptanceRate == null ? (
+        <span className="text-[10px] text-muted-foreground">
+          no verdicts yet
+        </span>
+      ) : (
+        <SummaryStat
+          value={`${Math.round(stats.acceptanceRate * 100)}%`}
+          label={`accepted · ${stats.applied} applied · ${stats.dismissed} dismissed`}
+        />
+      )}
+
+      <div className="w-px h-5 bg-border" />
+
+      <SummaryStat value={fmtLatency(stats.medianLatencyMs)} label="median" />
+
+      <div className="w-px h-5 bg-border" />
+
+      <SummaryStat
         value={fmtTokens(stats.tokens)}
-        note={tokensNote}
+        label={tokensNote ? `tokens · ${tokensNote}` : "tokens"}
       />
+
+      <span className="ml-auto text-[10px] text-muted-foreground">
+        Last 7 days
+      </span>
     </div>
   );
 }
 
-function StatCard({
-  label,
-  value,
-  note,
-}: {
-  label: string;
-  value: string;
-  note?: string | null;
-}) {
+function SummaryStat({ value, label }: { value: string; label: string }) {
   return (
-    <Card className="p-3">
-      <div className="text-[10px] text-muted-foreground uppercase tracking-wider">
-        {label}
-      </div>
-      <div className="mt-1 text-xl font-semibold tabular-nums">{value}</div>
-      {note && (
-        <div className="mt-0.5 text-[11px] text-muted-foreground truncate">
-          {note}
-        </div>
-      )}
-    </Card>
+    <span className="text-[10px] text-muted-foreground tabular-nums">
+      <span className="text-foreground font-medium">{value}</span> {label}
+    </span>
   );
 }
 
 // =============================================================================
-// Runs table
+// Runs table (table idiom — see /runs, /alerts/monitors)
 // =============================================================================
 
-function RunsSection({
+function RunsTable({
   runs,
   sources,
   onSelect,
@@ -271,103 +288,121 @@ function RunsSection({
   onSelect: (run: LabelRun) => void;
 }) {
   return (
-    <section className="space-y-2">
-      <div>
-        <h2 className="text-sm font-medium">Runs</h2>
-        <p className="text-xs text-muted-foreground mt-0.5">
-          Every inference call — what went in, what came out, what you decided
-        </p>
-      </div>
-      {runs.length === 0 ? (
-        <p className="text-sm text-muted-foreground py-4">
-          No runs yet — use Label on a chart panel to get the first proposals.
-        </p>
-      ) : (
-        <Card className="p-0 overflow-hidden">
-          <Table>
-            <TableHeader>
-              <TableRow className="hover:bg-transparent">
-                <TableHead className="text-xs">Time</TableHead>
-                <TableHead className="text-xs">Source / metrics</TableHead>
-                <TableHead className="text-xs">Model</TableHead>
-                <TableHead className="text-xs text-right">Latency</TableHead>
-                <TableHead className="text-xs text-right">Tokens</TableHead>
-                <TableHead className="text-xs text-right">Proposals</TableHead>
-                <TableHead className="text-xs">Verdicts</TableHead>
-                <TableHead className="text-xs">Context</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {runs.map((run) => {
-                const slugs = uniqueSlugs(run.metrics);
-                const tokens = runTokens(run);
-                return (
-                  <TableRow
-                    key={run.id}
-                    onClick={() => onSelect(run)}
-                    className="cursor-pointer text-xs"
-                  >
-                    <TableCell className="whitespace-nowrap font-mono text-[11px] text-muted-foreground">
-                      {format(new Date(run.created_at), "MMM d, HH:mm:ss")}
-                    </TableCell>
-                    <TableCell className="max-w-[220px]">
-                      <span className="truncate block">
-                        {slugs
-                          .map((s) => sources[s]?.name || s)
-                          .join(", ")}
-                        <span className="text-muted-foreground">
-                          {" "}
-                          · {run.metrics.length} metric
-                          {run.metrics.length !== 1 ? "s" : ""}
-                        </span>
-                      </span>
-                    </TableCell>
-                    <TableCell className="whitespace-nowrap">
-                      <span className="text-muted-foreground">
-                        {run.provider ?? "—"}
-                      </span>{" "}
-                      <span className="font-mono text-[11px]">
-                        {run.model ?? ""}
-                      </span>
-                    </TableCell>
-                    <TableCell className="text-right tabular-nums whitespace-nowrap">
-                      {fmtLatency(run.latency_ms)}
-                    </TableCell>
-                    <TableCell className="text-right tabular-nums whitespace-nowrap">
-                      {tokens == null ? "—" : fmtTokens(tokens)}
-                    </TableCell>
-                    <TableCell className="text-right tabular-nums">
-                      {run.observations.length}
-                    </TableCell>
-                    <TableCell className="whitespace-nowrap text-muted-foreground">
-                      {verdictSummary(run.observations)}
-                    </TableCell>
-                    <TableCell>
-                      {run.context_items.length > 0 ? (
-                        <Badge
-                          variant="outline"
-                          className="text-[10px] px-1.5 py-0 text-muted-foreground"
-                        >
-                          {run.context_items.length} item
-                          {run.context_items.length !== 1 ? "s" : ""}
-                        </Badge>
-                      ) : (
-                        <span className="text-muted-foreground">—</span>
-                      )}
-                    </TableCell>
-                  </TableRow>
-                );
-              })}
-            </TableBody>
-          </Table>
-        </Card>
-      )}
-    </section>
+    <Table className="w-full">
+      <TableHeader className="bg-muted/50 sticky top-0 z-10">
+        <TableRow>
+          {[
+            "Source",
+            "Model",
+            "Latency",
+            "Tokens",
+            "Proposals",
+            "Verdicts",
+            "Context",
+            "When",
+          ].map((col) => (
+            <TableHead
+              key={col}
+              className="text-left text-[10px] font-medium text-muted-foreground uppercase tracking-wider px-3 py-2"
+            >
+              {col}
+            </TableHead>
+          ))}
+        </TableRow>
+      </TableHeader>
+      <TableBody>
+        {runs.map((run) => {
+          const slugs = uniqueSlugs(run.metrics);
+          const tokens = runTokens(run);
+          return (
+            <TableRow
+              key={run.id}
+              onClick={() => onSelect(run)}
+              className="border-b border-border/50 transition-colors cursor-pointer hover:bg-muted/50"
+            >
+              {/* Source / metrics */}
+              <TableCell className="px-3 py-2.5">
+                <span className="text-sm font-medium truncate max-w-[220px] inline-block align-middle">
+                  {slugs.map((s) => sources[s]?.name || s).join(", ")}
+                </span>
+                <span className="text-xs text-muted-foreground align-middle">
+                  {" "}
+                  · {run.metrics.length} metric
+                  {run.metrics.length !== 1 ? "s" : ""}
+                </span>
+              </TableCell>
+
+              {/* Model */}
+              <TableCell className="px-3 py-2.5 whitespace-nowrap">
+                {run.model ? (
+                  <code className="text-xs bg-muted px-1.5 py-0.5 rounded font-mono">
+                    {run.model}
+                  </code>
+                ) : (
+                  <span className="text-xs text-muted-foreground">
+                    {run.provider ?? "—"}
+                  </span>
+                )}
+              </TableCell>
+
+              {/* Latency */}
+              <TableCell className="px-3 py-2.5">
+                <span className="text-xs text-foreground tabular-nums">
+                  {fmtLatency(run.latency_ms)}
+                </span>
+              </TableCell>
+
+              {/* Tokens */}
+              <TableCell className="px-3 py-2.5">
+                <span className="text-xs text-foreground tabular-nums">
+                  {tokens == null ? "—" : fmtTokens(tokens)}
+                </span>
+              </TableCell>
+
+              {/* Proposals */}
+              <TableCell className="px-3 py-2.5">
+                <span className="text-xs text-foreground tabular-nums">
+                  {run.observations.length}
+                </span>
+              </TableCell>
+
+              {/* Verdicts */}
+              <TableCell className="px-3 py-2.5 whitespace-nowrap">
+                <span className="text-xs text-muted-foreground">
+                  {verdictSummary(run.observations)}
+                </span>
+              </TableCell>
+
+              {/* Context */}
+              <TableCell className="px-3 py-2.5">
+                <span className="text-xs text-muted-foreground tabular-nums">
+                  {run.context_items.length > 0
+                    ? `${run.context_items.length} item${
+                        run.context_items.length !== 1 ? "s" : ""
+                      }`
+                    : "—"}
+                </span>
+              </TableCell>
+
+              {/* When */}
+              <TableCell className="px-3 py-2.5">
+                <span
+                  className="text-[10px] text-muted-foreground tabular-nums"
+                  title={new Date(run.created_at).toISOString()}
+                >
+                  {formatRelativeShort(run.created_at)}
+                </span>
+              </TableCell>
+            </TableRow>
+          );
+        })}
+      </TableBody>
+    </Table>
   );
 }
 
 // =============================================================================
-// Run detail sheet (read-only)
+// Run detail sheet (read-only — rhythm matches column-metadata-sheet)
 // =============================================================================
 
 function RunDetailSheet({
@@ -393,7 +428,7 @@ function RunDetailSheet({
               </SheetDescription>
             </SheetHeader>
 
-            <div className="flex-1 px-6 py-5 space-y-6">
+            <div className="flex-1 px-6 py-5 space-y-5">
               {/* Performance */}
               <div>
                 <DetailHeading>Run</DetailHeading>
@@ -425,19 +460,18 @@ function RunDetailSheet({
                 <DetailHeading>Metrics</DetailHeading>
                 <div className="flex flex-wrap gap-1">
                   {run.metrics.map((m) => (
-                    <Badge
+                    <code
                       key={m}
-                      variant="outline"
-                      className="font-mono text-[10px] px-1.5 py-0 text-muted-foreground"
+                      className="text-[10px] bg-muted px-1.5 py-0.5 rounded font-mono text-muted-foreground"
                     >
                       {m}
-                    </Badge>
+                    </code>
                   ))}
                 </div>
               </div>
 
               {/* Retrieval record */}
-              <div>
+              <div className="pt-4 border-t border-border/50">
                 <DetailHeading>Context used</DetailHeading>
                 {run.context_items.length === 0 ? (
                   <p className="text-xs text-muted-foreground">
@@ -459,7 +493,7 @@ function RunDetailSheet({
                         </span>
                         <Link
                           href={sourceHref(item.slug, sources[item.slug]?.type)}
-                          className="inline-flex items-center gap-1 text-muted-foreground hover:text-foreground transition-colors shrink-0"
+                          className="inline-flex items-center gap-1 font-mono text-[11px] text-muted-foreground hover:text-foreground transition-colors shrink-0"
                         >
                           {item.slug}
                           <ArrowRight className="h-3 w-3" />
@@ -471,18 +505,18 @@ function RunDetailSheet({
               </div>
 
               {/* Proposals + verdicts */}
-              <div>
+              <div className="pt-4 border-t border-border/50">
                 <DetailHeading>Proposals</DetailHeading>
                 {run.observations.length === 0 ? (
                   <p className="text-xs text-muted-foreground">
                     The model proposed nothing for this window.
                   </p>
                 ) : (
-                  <div className="space-y-3">
+                  <div className="space-y-2">
                     {run.observations.map((o, i) => (
                       <div
                         key={i}
-                        className="rounded-md border border-border p-2.5 space-y-1"
+                        className="p-3 rounded-lg bg-muted/30 border border-border/50 space-y-1"
                       >
                         <div className="flex items-start justify-between gap-2">
                           <span className="text-sm font-medium leading-tight">
@@ -495,7 +529,7 @@ function RunDetailSheet({
                             {o.note}
                           </p>
                         )}
-                        <div className="flex items-center gap-2 text-[11px] text-muted-foreground">
+                        <div className="flex items-center gap-2 text-[10px] text-muted-foreground">
                           {o.kind === "remember" ? (
                             <span className="inline-flex items-center gap-1">
                               <Brain className="h-3 w-3" />
@@ -505,7 +539,7 @@ function RunDetailSheet({
                             <>
                               {o.confidence && <span>{o.confidence}</span>}
                               {o.start_ms != null && (
-                                <span className="font-mono">
+                                <span className="font-mono tabular-nums">
                                   {format(new Date(o.start_ms), "HH:mm:ss")}
                                   {o.end_ms != null &&
                                     ` – ${format(new Date(o.end_ms), "HH:mm:ss")}`}
@@ -552,19 +586,22 @@ function DetailField({
 
 function VerdictBadge({ verdict }: { verdict: RunObservation["verdict"] }) {
   return (
-    <Badge
-      variant="outline"
+    <span
       className={cn(
-        "text-[10px] px-1.5 py-0 shrink-0",
+        "inline-flex items-center text-[10px] px-1.5 py-0.5 rounded font-medium shrink-0",
         verdict === "applied"
-          ? "text-green-600 dark:text-green-400 border-green-500/40"
+          ? "bg-green-500/10 text-green-500"
           : verdict === "dismissed"
-            ? "text-muted-foreground"
-            : "text-amber-600 dark:text-amber-400 border-amber-500/40",
+            ? "bg-muted text-muted-foreground"
+            : "bg-amber-500/10 text-amber-500",
       )}
     >
-      {verdict ?? "pending"}
-    </Badge>
+      {verdict === "applied"
+        ? "Applied"
+        : verdict === "dismissed"
+          ? "Dismissed"
+          : "Pending"}
+    </span>
   );
 }
 
@@ -580,52 +617,55 @@ function MemorySection({
   onDelete: (item: MemoryItem) => void;
 }) {
   return (
-    <section className="space-y-2">
-      <div>
+    <div className="shrink-0 mt-2 max-h-[35%] flex flex-col">
+      <div className="flex items-center gap-2 mb-2 shrink-0">
         <h2 className="text-sm font-medium">Model memory</h2>
-        <p className="text-xs text-muted-foreground mt-0.5">
-          Facts the model asked to remember — these are retrieved into every
-          future run.
-        </p>
+        <span className="text-[10px] text-muted-foreground tabular-nums">
+          {memory.length} remembered
+        </span>
       </div>
-      {memory.length === 0 ? (
-        <p className="text-sm text-muted-foreground py-4">
-          Nothing remembered yet — apply a Remember proposal to save one.
-        </p>
-      ) : (
-        <div className="space-y-2">
-          {memory.map((item) => (
-            <Card key={item.id} className="p-3 flex items-start gap-3">
-              <div className="p-2 rounded-lg bg-muted shrink-0">
-                <Brain className="h-4 w-4 text-muted-foreground" />
-              </div>
-              <div className="flex-1 min-w-0">
-                <p className="text-sm whitespace-pre-wrap">{item.content}</p>
-                <p className="text-xs text-muted-foreground mt-1">
-                  <Link
-                    href={sourceHref(item.source_slug, item.source_type)}
-                    className="hover:text-foreground transition-colors"
-                  >
-                    {item.source_name || item.source_slug}
-                  </Link>
-                  {item.created_at && (
-                    <>
-                      {" · "}
-                      {format(new Date(item.created_at), "MMM d, yyyy")}
-                    </>
-                  )}
-                </p>
-              </div>
-              <DeleteButton
-                entityName="this memory"
-                confirmDescription="The model will no longer see this fact in future runs."
-                onConfirm={() => onDelete(item)}
-                className="shrink-0"
-              />
-            </Card>
-          ))}
-        </div>
-      )}
-    </section>
+      <Card className="min-h-0 overflow-y-auto">
+        {memory.length === 0 ? (
+          <p className="text-xs text-muted-foreground px-3 py-3">
+            Nothing remembered yet — apply a Remember proposal to save one. The
+            model retrieves these facts into every future run.
+          </p>
+        ) : (
+          <ul>
+            {memory.map((item) => (
+              <li
+                key={item.id}
+                className="group flex items-start gap-2.5 px-3 py-2 border-b border-border/40 last:border-b-0"
+              >
+                <Brain className="h-3.5 w-3.5 text-muted-foreground mt-0.5 shrink-0" />
+                <div className="flex-1 min-w-0">
+                  <p className="text-xs whitespace-pre-wrap">{item.content}</p>
+                  <p className="text-[10px] text-muted-foreground mt-0.5">
+                    <Link
+                      href={sourceHref(item.source_slug, item.source_type)}
+                      className="font-mono hover:text-foreground transition-colors"
+                    >
+                      {item.source_name || item.source_slug}
+                    </Link>
+                    {item.created_at && (
+                      <span className="tabular-nums">
+                        {" · "}
+                        {formatRelativeShort(item.created_at)}
+                      </span>
+                    )}
+                  </p>
+                </div>
+                <DeleteButton
+                  entityName="this memory"
+                  confirmDescription="The model will no longer see this fact in future runs."
+                  onConfirm={() => onDelete(item)}
+                  className="shrink-0 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity"
+                />
+              </li>
+            ))}
+          </ul>
+        )}
+      </Card>
+    </div>
   );
 }
