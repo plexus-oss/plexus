@@ -13,7 +13,7 @@ arrange a channel.
 
 Everything in this repository — the platform services (gateway, api,
 frontend, houston, clickhouse loader) and the self-host bundle — plus the
-Apache-2.0 SDKs (plexus-python, plexus-typescript).
+Apache-2.0 SDKs (plexus-python).
 
 ## Security posture (for evaluators)
 

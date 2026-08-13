@@ -26,7 +26,7 @@ export interface InlineMetricPickerProps {
   onChange: (next: string[]) => void;
   /** Restrict the candidate set (e.g. only lat/lon metrics for `map`). */
   filter?: (sourceId: string, metric: string) => boolean;
-  /** Lock the picker to a single source (e.g. radar/attitude after device pick). */
+  /** Lock the picker to a single source (after a device pick). */
   sourceId?: string;
   placeholder?: string;
   className?: string;

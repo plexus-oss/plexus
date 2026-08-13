@@ -29,14 +29,12 @@ type AnyPanelComponent = ComponentType<any>;
 // Lightweight panels - import directly
 import { ChartPanel } from "./panels/chart-panel";
 import { StatPanel } from "./panels/stat-panel";
-import { TextPanel } from "./panels/text-panel";
 import { ListPanel } from "./panels/list-panel";
 import { AlertsPanel } from "./panels/alerts-panel";
 import { EventsPanel } from "./panels/events-panel";
 import { EventLogPanel } from "./panels/event-log-panel";
 import { DevicesPanel } from "./panels/devices-panel";
 import { FleetTablePanel } from "./panels/fleet-table-panel";
-import { ImagePanel } from "./panels/image-panel";
 
 // Medium-weight panels - lazy loaded
 const DashboardPanel = dynamic(
@@ -53,20 +51,6 @@ const DataGridPanel = dynamic(
     })),
   { loading: PanelLoader },
 );
-const FleetGridPanel = dynamic(
-  () =>
-    import("./panels/fleet-grid-panel").then((m) => ({
-      default: m.FleetGridPanel,
-    })),
-  { loading: PanelLoader },
-);
-const AttitudePanel = dynamic(
-  () =>
-    import("./panels/attitude-panel").then((m) => ({
-      default: m.AttitudePanel,
-    })),
-  { loading: PanelLoader },
-);
 
 // Heavy panels - lazy loaded
 const EarthPanel = dynamic(
@@ -80,29 +64,8 @@ const SatelliteInfoPanel = dynamic(
     })),
   { loading: PanelLoader, ssr: false },
 );
-const Model3DPanel = dynamic(
-  () =>
-    import("./panels/model3d-panel").then((m) => ({ default: m.Model3DPanel })),
-  { loading: PanelLoader, ssr: false },
-);
-const MapPanel = dynamic(
-  () => import("./panels/map-panel").then((m) => ({ default: m.MapPanel })),
-  { loading: PanelLoader, ssr: false },
-);
 const VideoPanel = dynamic(
   () => import("./panels/video-panel").then((m) => ({ default: m.VideoPanel })),
-  { loading: PanelLoader },
-);
-const CalendarPanel = dynamic(
-  () =>
-    import("./panels/calendar-panel").then((m) => ({
-      default: m.CalendarPanel,
-    })),
-  { loading: PanelLoader },
-);
-const HeatmapPanel = dynamic(
-  () =>
-    import("./panels/heatmap-panel").then((m) => ({ default: m.HeatmapPanel })),
   { loading: PanelLoader },
 );
 const GanttPanel = dynamic(
@@ -116,24 +79,6 @@ const AssocScatterPanel = dynamic(
     })),
   { loading: PanelLoader },
 );
-const RadarPanel = dynamic(
-  () => import("./panels/radar-panel").then((m) => ({ default: m.RadarPanel })),
-  { loading: PanelLoader },
-);
-const VideoTelemetryPanel = dynamic(
-  () =>
-    import("./panels/video-telemetry-panel").then((m) => ({
-      default: m.VideoTelemetryPanel,
-    })),
-  { loading: PanelLoader },
-);
-const SchematicPanel = dynamic(
-  () =>
-    import("./panels/schematic-panel").then((m) => ({
-      default: m.SchematicPanel,
-    })),
-  { loading: PanelLoader, ssr: false },
-);
 // Component map — each panel has slightly different props (e.g. ChartPanel takes
 // chartType, DashboardPanel omits timeRange). Using `any` here is intentional;
 // the actual type safety comes from each panel component's own props interface.
@@ -146,17 +91,11 @@ const COMPONENT_MAP: Record<string, AnyPanelComponent> = {
   scatter: ChartPanel,
   "assoc-scatter": AssocScatterPanel,
   stat: StatPanel,
-  heatmap: HeatmapPanel,
-  radar: RadarPanel,
   gantt: GanttPanel,
   datagrid: DataGridPanel,
-  "fleet-grid": FleetGridPanel,
   "fleet-table": FleetTablePanel,
-  attitude: AttitudePanel,
-  model3d: Model3DPanel,
   earth: EarthPanel,
   "satellite-info": SatelliteInfoPanel,
-  text: TextPanel,
   list: ListPanel,
   alerts: AlertsPanel,
   events: EventsPanel,
@@ -164,11 +103,6 @@ const COMPONENT_MAP: Record<string, AnyPanelComponent> = {
   devices: DevicesPanel,
   dashboard: DashboardPanel,
   video: VideoPanel,
-  "video-telemetry": VideoTelemetryPanel,
-  map: MapPanel,
-  calendar: CalendarPanel,
-  schematic: SchematicPanel,
-  image: ImagePanel,
 } satisfies Record<KnownPanelType, AnyPanelComponent>;
 
 // =============================================================================

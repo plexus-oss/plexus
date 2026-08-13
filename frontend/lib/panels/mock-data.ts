@@ -99,68 +99,6 @@ export function generateMockData(panelType: string): TelemetryData | null {
       };
     }
 
-    case "heatmap": {
-      // Dense data with a realistic pattern — API latency that clusters around 30-50ms
-      // with occasional spikes to 100-200ms during peak hours
-      const ts = timestamps(500, 12_000); // 500 points over ~100 minutes
-      const values = Array.from({ length: 500 }, (_, i) => {
-        const hour = (i / 500) * 100; // progress through the window
-        const isPeak = hour > 30 && hour < 70;
-        const base = isPeak ? 60 : 30;
-        const spread = isPeak ? 80 : 25;
-        // Bimodal: most values cluster low, some spike high
-        const r = Math.random();
-        if (r > 0.85 && isPeak) {
-          return +(base + spread + Math.random() * spread).toFixed(1); // spike
-        }
-        return +(base + (Math.random() - 0.3) * spread).toFixed(1);
-      });
-      return {
-        "demo:latency_ms": ts.map((t, i) => ({
-          timestamp: t,
-          value: Math.max(1, values[i]),
-        })),
-      };
-    }
-
-    case "radar": {
-      const ts = timestamps(30, 1_000);
-      // Simulate radar sweep with bearing/range
-      const bearings = Array.from({ length: 30 }, (_, i) => i * 12); // 0-348 degrees
-      const ranges = Array.from(
-        { length: 30 },
-        () => +(Math.random() * 80 + 20).toFixed(0),
-      );
-      return {
-        "demo:bearing": ts.map((t, i) => ({
-          timestamp: t,
-          value: bearings[i],
-        })),
-        "demo:range": ts.map((t, i) => ({ timestamp: t, value: ranges[i] })),
-      };
-    }
-
-    case "map": {
-      // Simulate a drone flight path around San Francisco
-      const ts = timestamps(30, 10_000);
-      const baseLat = 37.7749;
-      const baseLng = -122.4194;
-      const lats = Array.from(
-        { length: 30 },
-        (_, i) =>
-          +(baseLat + Math.sin((i / 30) * Math.PI * 2) * 0.01).toFixed(6),
-      );
-      const lngs = Array.from(
-        { length: 30 },
-        (_, i) =>
-          +(baseLng + Math.cos((i / 30) * Math.PI * 2) * 0.01).toFixed(6),
-      );
-      return {
-        "demo:latitude": ts.map((t, i) => ({ timestamp: t, value: lats[i] })),
-        "demo:longitude": ts.map((t, i) => ({ timestamp: t, value: lngs[i] })),
-      };
-    }
-
     case "gantt": {
       // Multiple metrics with on/off patterns create distinct task bars
       const now = Date.now();
@@ -204,27 +142,6 @@ export function generateMockData(panelType: string): TelemetryData | null {
       return taskMetrics;
     }
 
-    case "attitude": {
-      const ts = timestamps(60, 1_000); // 60s of attitude data
-      const roll = sine(60, 5, 0, 0.5);
-      const pitch = sine(60, 3, 2, 0.3);
-      const yaw = sine(60, 10, 45, 0.2);
-      return {
-        "demo:roll": ts.map((t, i) => ({
-          timestamp: t,
-          value: +roll[i].toFixed(2),
-        })),
-        "demo:pitch": ts.map((t, i) => ({
-          timestamp: t,
-          value: +pitch[i].toFixed(2),
-        })),
-        "demo:heading": ts.map((t, i) => ({
-          timestamp: t,
-          value: +yaw[i].toFixed(2),
-        })),
-      };
-    }
-
     case "list": {
       const ts = timestamps(6, 60_000);
       const codes = [200, 201, 200, 404, 200, 500];
@@ -232,17 +149,6 @@ export function generateMockData(panelType: string): TelemetryData | null {
         "demo:status_code": ts.map((t, i) => ({
           timestamp: t,
           value: codes[i],
-        })),
-      };
-    }
-
-    case "calendar": {
-      const ts = timestamps(10, 86_400_000); // 10 days
-      const counts = [2, 0, 1, 3, 0, 1, 2, 0, 4, 1];
-      return {
-        "demo:event_count": ts.map((t, i) => ({
-          timestamp: t,
-          value: counts[i],
         })),
       };
     }
@@ -266,12 +172,10 @@ export function generateMockData(panelType: string): TelemetryData | null {
     }
 
     // Panels that don't use TelemetryData or need real connections
-    case "text":
     case "video":
     case "alerts":
     case "earth":
     case "satellite-info":
-    case "model3d":
     case "dashboard":
       return null;
 

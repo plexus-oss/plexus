@@ -14,26 +14,16 @@ import {
   ScatterChart,
   Crosshair,
   Hash,
-  Grid3X3,
-  Radar,
   GanttChart,
   Table,
-  Compass,
-  Box,
   Layers,
-  PenIcon,
-  MapIcon,
   VideoIcon,
-  CalendarIcon,
   ListIcon,
   Globe,
   AlertTriangle,
-  Clapperboard,
   Server,
   Activity,
   ScrollText,
-  Workflow,
-  ImageIcon as ImagePanelIcon,
 } from "lucide-react";
 import type { PanelConfig } from "@/lib/types/dashboard";
 
@@ -56,23 +46,12 @@ export const PANEL_TYPES = [
   "bar",
   "scatter",
   "assoc-scatter",
-  "heatmap",
   "stat",
   "datagrid",
-  "fleet-grid",
   "fleet-table",
-  "radar",
-  "attitude",
-  "schematic",
-  "video-telemetry",
-  "model3d",
   "earth",
   "satellite-info",
-  "text",
-  "image",
   "video",
-  "map",
-  "calendar",
   "list",
   "gantt",
   "alerts",
@@ -151,28 +130,17 @@ const PANEL_VISIBILITY: Record<KnownPanelType, PanelVisibility> = {
   stat: "core",
   datagrid: "core",
   list: "core",
-  map: "core",
   alerts: "core",
   dashboard: "core",
-  text: "advanced",
-  image: "advanced",
   video: "advanced",
-  "video-telemetry": "advanced",
-  model3d: "advanced",
-  schematic: "advanced",
   "fleet-table": "advanced",
-  "fleet-grid": "advanced",
   devices: "advanced",
   events: "advanced",
   event_log: "advanced",
-  heatmap: "advanced",
-  radar: "advanced",
   gantt: "advanced",
-  calendar: "advanced",
   "assoc-scatter": "advanced",
   earth: "pack:space",
   "satellite-info": "pack:space",
-  attitude: "pack:space",
 };
 
 export function getPanelVisibility(type: string): PanelVisibility {
@@ -306,17 +274,6 @@ registerPanel({
   dataHint:
     "SQL query with 3 columns:\nX (index), Y (lane/id), and a category/status column",
 });
-registerPanel({
-  type: "heatmap",
-  label: "Heatmap",
-  description: "Density across two dimensions",
-  icon: Grid3X3,
-  category: "charts",
-  source: "data",
-  lazy: true,
-  defaultSize: "medium",
-  dataHint: "One or more numeric metrics\nValues binned by time and magnitude",
-});
 // --- Stats & Data ---
 registerPanel({
   type: "stat",
@@ -339,17 +296,6 @@ registerPanel({
   dataHint: "Any metrics or SQL query results\nDisplays as a sortable table",
 });
 registerPanel({
-  type: "fleet-grid",
-  label: "Fleet Grid",
-  description: "Linear-style cards, one per row",
-  icon: Grid3X3,
-  category: "stats",
-  source: "data",
-  defaultSize: "large",
-  dataHint:
-    "Connection query with one row per entity. Auto-detected columns:\n  title: name | slug | id\n  subtitle: farm | site | region | location\n  state: state | status\n  metric: soc | battery | progress (0-100)\n  severity: severity | alert_severity\n  timestamp: last_seen | updated_at\n\nOverride with panel config keys (titleColumn, subtitleColumn, …).",
-});
-registerPanel({
   type: "fleet-table",
   label: "Fleet Table",
   description: "One row per device, live metric columns, drill-in on click",
@@ -360,72 +306,7 @@ registerPanel({
   dataHint:
     "Pure realtime (no SQL). panel.sources = device slugs (rows). panel.config.columns = metric columns with optional warnAbove / critAbove / warnBelow / critBelow thresholds. Row order: worst severity first.",
 });
-// --- Instruments ---
-registerPanel({
-  type: "radar",
-  label: "Radar",
-  description: "Multi-axis comparison",
-  icon: Radar,
-  category: "instruments",
-  source: "data",
-  lazy: true,
-  defaultSize: "medium",
-  dataHint: "3+ metrics plotted on radial axes",
-});
-registerPanel({
-  type: "attitude",
-  label: "Attitude",
-  description: "Roll, pitch, yaw orientation",
-  icon: Compass,
-  category: "instruments",
-  source: "data",
-  defaultSize: "medium",
-  dataHint: "Metrics: roll, pitch, yaw (degrees)\nOr quaternion (x, y, z, w)",
-});
-registerPanel({
-  type: "schematic",
-  label: "Schematic",
-  description: "Live values pinned to a 2D SVG schematic",
-  icon: Workflow,
-  category: "instruments",
-  source: "data",
-  lazy: true,
-  ssr: false,
-  defaultSize: "large",
-  defaultConfig: {
-    schematicShowLabels: true,
-    schematicShowConnectors: true,
-    schematicBackgroundOpacity: 1,
-  },
-  dataHint:
-    "Upload an SVG (P&ID, electrical, block diagram). Drop pins on the schematic and bind each to a metric. Auto-detect tries to match SVG <text> labels to your device metrics.",
-});
-registerPanel({
-  type: "video-telemetry",
-  label: "Video + Telemetry",
-  description: "Live camera feed with metric overlay",
-  icon: Clapperboard,
-  category: "instruments",
-  source: "data",
-  lazy: true,
-  defaultSize: "large",
-  dataHint:
-    "Select a camera + metrics to overlay\nMetrics display as a HUD on the video",
-});
-
 // --- 3D ---
-registerPanel({
-  type: "model3d",
-  label: "3D Model",
-  description: "Render GLTF/STL models",
-  icon: Box,
-  category: "3d",
-  source: "none",
-  lazy: true,
-  ssr: false,
-  defaultSize: "large",
-  dataHint: "Model URL (GLTF, GLB, or STL)\nBind metrics to model parts",
-});
 registerPanel({
   type: "earth",
   label: "Earth",
@@ -455,26 +336,6 @@ registerPanel({
 
 // --- Other ---
 registerPanel({
-  type: "text",
-  label: "Text",
-  description: "Markdown notes and documentation",
-  icon: PenIcon,
-  category: "other",
-  source: "none",
-  defaultSize: "small",
-});
-registerPanel({
-  type: "image",
-  label: "Image",
-  description: "Static image — logo, photo, screenshot",
-  icon: ImagePanelIcon,
-  category: "other",
-  source: "none",
-  defaultSize: "medium",
-  defaultConfig: { imageFit: "contain" },
-  dataHint: "Upload PNG / JPG / WebP or paste a URL.",
-});
-registerPanel({
   type: "video",
   label: "Video",
   description: "Live camera feeds",
@@ -484,29 +345,6 @@ registerPanel({
   lazy: true,
   defaultSize: "medium",
   dataHint: "Select a camera from a connected device",
-});
-registerPanel({
-  type: "map",
-  label: "Map",
-  description: "Geographic positions on a 2D map",
-  icon: MapIcon,
-  category: "other",
-  source: "data",
-  lazy: true,
-  ssr: false,
-  defaultSize: "medium",
-  dataHint:
-    "Latitude + longitude metrics or columns\nOptional: speed, heading, altitude",
-});
-registerPanel({
-  type: "calendar",
-  label: "Calendar",
-  description: "Events on a timeline",
-  icon: CalendarIcon,
-  category: "other",
-  source: "data",
-  lazy: true,
-  defaultSize: "medium",
 });
 registerPanel({
   type: "list",

@@ -174,9 +174,7 @@ export function AddDeviceModal({
     if (!q) return { kind: "idle" };
     if (!/^\d{1,6}$/.test(q)) return { kind: "none" };
     if (tle.q === q) {
-      return tle.result
-        ? { kind: "norad", tle: tle.result }
-        : { kind: "none" };
+      return tle.result ? { kind: "norad", tle: tle.result } : { kind: "none" };
     }
     return { kind: "checking" };
   }, [view, query, tle]);
@@ -352,7 +350,14 @@ export function AddDeviceModal({
         subtitle: "Product events from a site, via your own server route",
         sectionId: "software",
         onSelect: () => setView("web-app"),
-        keywords: ["web", "frontend", "site", "analytics", "events", "software"],
+        keywords: [
+          "web",
+          "frontend",
+          "site",
+          "analytics",
+          "events",
+          "software",
+        ],
       },
       {
         id: "worker",
@@ -677,46 +682,74 @@ px.send("temperature", 23.5)`,
     if (view === "service") {
       return {
         lang: "typescript",
-        code: `// npm install plexus-typescript   (server-side — key stays in env)
-import { Plexus } from "plexus-typescript";
+        code: `// server-side — key stays in env, no SDK needed
+const send = (metric: string, value: number, tags?: Record<string, string>) =>
+  fetch("https://gateway.plexus.company/ingest", {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-api-key": process.env.PLEXUS_API_KEY!,
+    },
+    body: JSON.stringify({
+      source_id: "${slug}",
+      points: [{ metric, value, timestamp: Date.now(), tags }],
+    }),
+  }).catch(() => {});
 
-const px = new Plexus({ sourceId: "${slug}", kind: "service" });
-await px.send("request_latency_ms", 42, { tags: { route: "/checkout" } });
-await px.send("error_count", 0);`,
-        copy: "The Plexus TypeScript SDK: reads PLEXUS_API_KEY from env, retries with backoff, buffers on failure, and declares this source as a service so it gets the right dashboard template.",
+await send("request_latency_ms", 42, { route: "/checkout" });
+await send("error_count", 0);`,
+        copy: "Plain HTTP from any server runtime — POST points to the ingest gateway with the x-api-key header. Batch several points per request if you send often.",
       };
     }
     if (view === "web-app") {
       return {
         lang: "typescript",
-        code: `// npm install plexus-typescript
-// app/api/plexus/route.ts — your server route holds the key
-import { createIngestProxy } from "plexus-typescript/server";
-export const POST = createIngestProxy({
-  sourceId: "${slug}",
-  allowMetrics: ["page_view", "signup", "read_seconds"],
-});
+        code: `// app/api/plexus/route.ts — your server route holds the key
+export async function POST(req: Request) {
+  const { metric, value, tags } = await req.json();
+  if (!["page_view", "signup", "read_seconds"].includes(metric))
+    return new Response(null, { status: 400 });
+  await fetch("https://gateway.plexus.company/ingest", {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-api-key": process.env.PLEXUS_API_KEY!,
+    },
+    body: JSON.stringify({
+      source_id: "${slug}",
+      points: [{ metric, value: value ?? 1, timestamp: Date.now(), tags }],
+    }),
+  });
+  return new Response(null, { status: 204 });
+}
 
-// browser — fire-and-forget beacons, works on page unload
-import { createBrowserClient } from "plexus-typescript/browser";
-const plexus = createBrowserClient();
-plexus.track("signup", 1, { page: "/pricing" });`,
-        copy: "Browsers never hold the API key: the SDK's server proxy forwards allowlisted events to Plexus, and the browser client beacons to it.",
+// browser — fire-and-forget beacon, works on page unload
+navigator.sendBeacon(
+  "/api/plexus",
+  JSON.stringify({ metric: "signup", value: 1, tags: { page: "/pricing" } }),
+);`,
+        copy: "Browsers never hold the API key: your server route forwards allowlisted events to Plexus, and the browser beacons to it.",
       };
     }
     if (view === "worker") {
       return {
         lang: "typescript",
-        code: `// npm install plexus-typescript — end of each job run
-import { Plexus } from "plexus-typescript";
-
-const px = new Plexus({ sourceId: "${slug}", kind: "worker" });
-await px.sendBatch([
-  ["job_duration_ms", 5210],
-  ["heartbeat", 1],
-]);
-await px.close();`,
-        copy: "Report a duration and a heartbeat at the end of each run (any language works — this is the TS SDK; curl works too). Pair with an offline monitor to get alerted when the job stops reporting.",
+        code: `// end of each job run — one POST, any language
+await fetch("https://gateway.plexus.company/ingest", {
+  method: "POST",
+  headers: {
+    "content-type": "application/json",
+    "x-api-key": process.env.PLEXUS_API_KEY!,
+  },
+  body: JSON.stringify({
+    source_id: "${slug}",
+    points: [
+      { metric: "job_duration_ms", value: 5210, timestamp: Date.now() },
+      { metric: "heartbeat", value: 1, timestamp: Date.now() },
+    ],
+  }),
+});`,
+        copy: "Report a duration and a heartbeat at the end of each run — one HTTP POST from any language (curl works too). Pair with an offline monitor to get alerted when the job stops reporting.",
       };
     }
     return {

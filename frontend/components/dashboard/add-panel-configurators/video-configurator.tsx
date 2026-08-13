@@ -4,8 +4,7 @@
  * VideoConfigurator — two modes:
  *
  *   • Live camera — pick a camera from an online device (streams over the
- *     realtime websocket). The "video-telemetry" panel type also overlays
- *     metrics on top of the feed.
+ *     realtime websocket).
  *   • Embed / URL — point at an MP4/WebM, a YouTube/Vimeo link, or any
  *     generic embed URL. Stored as `config.videoUrl`; the panel detects
  *     the kind and renders an <iframe> or <video> accordingly.
@@ -43,8 +42,6 @@ export function VideoConfigurator({
   useEffect(() => {
     onValidChange(valid);
   }, [valid, onValidChange]);
-
-  const isTelemetryOverlay = draft.type === "video-telemetry";
 
   const setConfig = (updates: Record<string, unknown>) =>
     onChange({ ...draft, config: { ...draft.config, ...updates } });
@@ -94,9 +91,7 @@ export function VideoConfigurator({
             Camera
           </Label>
           <p className="text-[10px] text-muted-foreground mb-2">
-            {isTelemetryOverlay
-              ? "Pick a camera, then add overlay metrics."
-              : "Pick a camera from one of your online devices."}
+            Pick a camera from one of your online devices.
           </p>
           <SourcePicker
             dataSource={draft.dataSource ?? { type: "realtime" }}

@@ -5,8 +5,6 @@
 import type {
   AlertsPanelConfig,
   AssocScatterPanelConfig,
-  AttitudePanelConfig,
-  CalendarPanelConfig,
   ChartPanelConfig,
   DashboardPanelConfig,
   DataGridPanelConfig,
@@ -14,73 +12,14 @@ import type {
   EarthPanelConfig,
   EventLogPanelConfig,
   EventsPanelConfig,
-  FleetGridPanelConfig,
   FleetTablePanelConfig,
   GanttPanelConfig,
-  HeatmapPanelConfig,
-  ImagePanelConfig,
   ListPanelConfig,
-  MapPanelConfig,
-  Model3DPanelConfig,
-  RadarPanelConfig,
   SatelliteInfoPanelConfig,
-  SchematicPanelConfig,
   StatPanelConfig,
   StatusCardLegacyConfig,
-  TextPanelConfig,
   VideoPanelConfig,
-  VideoTelemetryPanelConfig,
 } from "./panel-configs";
-
-/**
- * Binding a GLTF mesh part to a live metric with optional thresholds.
- *
- * `invertThreshold` flips the comparison: default fires when value goes
- * ABOVE the threshold (high-is-bad — temp, pressure, RPM). Set true for
- * "low-is-bad" metrics like UPS charge or oxygen level.
- */
-export interface Model3DPartBinding {
-  partName: string;
-  metric: string;
-  thresholdWarning?: number;
-  thresholdCritical?: number;
-  invertThreshold?: boolean;
-}
-
-/**
- * Where a TelemetryBinding attaches to its artifact.
- *
- *   svg-id     → pin sticks to <g id="…"> / element id in the uploaded SVG.
- *                Survives re-uploads of the same schematic with stable ids.
- *   svg-point  → fallback when there's no id under the user's click.
- *                Stored as raw viewBox-space coordinates (NOT normalized).
- *   mesh-name  → 3D analog — anchored to a named Object3D in a GLTF/GLB.
- */
-export type AnchorRef =
-  | { kind: "svg-id"; id: string }
-  | { kind: "svg-point"; x: number; y: number }
-  | { kind: "mesh-name"; name: string };
-
-/**
- * Unified binding shape used by both the 2D Schematic panel and the
- * 3D Model panel. Same threshold semantics, same display modes, just a
- * different anchor type.
- */
-export interface TelemetryBinding {
-  id: string;
-  anchor: AnchorRef;
-  metric: string; // "sourceId:metricName"
-  display: "value" | "state" | "indicator";
-  label?: string;
-  unit?: string;
-  decimals?: number;
-  thresholdWarning?: number;
-  thresholdCritical?: number;
-  /** State pins: map raw value to a display label + optional color. */
-  enumMap?: Record<string | number, { label: string; color?: string }>;
-  /** Screen-pixel offset of the callout from the anchor (so the user can nudge callouts off the geometry). */
-  calloutOffset?: { dx: number; dy: number };
-}
 
 /**
  * Built-in panel types — sourced from the runtime registry so the union can
@@ -204,28 +143,17 @@ export interface DataAggregation {
 export type PanelConfig = ChartPanelConfig &
   AssocScatterPanelConfig &
   StatPanelConfig &
-  HeatmapPanelConfig &
   DataGridPanelConfig &
-  FleetGridPanelConfig &
   FleetTablePanelConfig &
-  RadarPanelConfig &
-  AttitudePanelConfig &
-  Model3DPanelConfig &
   EarthPanelConfig &
   SatelliteInfoPanelConfig &
-  TextPanelConfig &
   VideoPanelConfig &
-  VideoTelemetryPanelConfig &
-  MapPanelConfig &
-  CalendarPanelConfig &
   ListPanelConfig &
   GanttPanelConfig &
   AlertsPanelConfig &
   EventsPanelConfig &
   DevicesPanelConfig &
   DashboardPanelConfig &
-  SchematicPanelConfig &
-  ImagePanelConfig &
   EventLogPanelConfig &
   StatusCardLegacyConfig;
 

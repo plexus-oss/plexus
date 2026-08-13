@@ -3,8 +3,7 @@
 /**
  * InlineSourcePicker — sibling of InlineMetricPicker, but each row is a
  * source (device) instead of a metric. Used by panel-aware configurators
- * whose top-level data binding is a device, not a metric: fleet-grid,
- * fleet-table, map, radar (single-source), attitude (single-source).
+ * whose top-level data binding is a device, not a metric: fleet-table.
  */
 
 import { useMemo, useState } from "react";

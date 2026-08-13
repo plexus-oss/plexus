@@ -1,7 +1,7 @@
 "use client";
 
 /**
- * FleetConfigurator — fleet-grid / fleet-table.
+ * FleetConfigurator — fleet-table.
  *
  * Source = the set of devices on display. Empty by default; the user
  * opts in. Optional "metric to display" picker for the headline value

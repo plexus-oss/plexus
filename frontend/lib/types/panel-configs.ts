@@ -7,14 +7,11 @@
  */
 
 import type { Transform } from "@/lib/transforms";
-import type { ColorScaleName } from "@/components/ui/lib/color-scales";
 import type { KnownPanelType } from "@/lib/panels/registry";
 import type {
   DataFilter,
   DataAggregation,
   Aggregation,
-  Model3DPartBinding,
-  TelemetryBinding,
   AssocCategory,
 } from "./dashboard";
 
@@ -108,54 +105,6 @@ export interface StatPanelConfig extends BasePanelConfig {
 }
 
 // =============================================================================
-// Heatmap Panel
-// =============================================================================
-
-export interface HeatmapPanelConfig extends BasePanelConfig {
-  colorScale?: string;
-  /** Minimum number of time buckets (default 6) */
-  minTimeBuckets?: number;
-  /** Maximum number of time buckets (default 20) */
-  maxTimeBuckets?: number;
-  /** Minimum number of value buckets (default 5) */
-  minValueBuckets?: number;
-  /** Maximum number of value buckets (default 15) */
-  maxValueBuckets?: number;
-  /** Named-slot bindings set by HeatmapConfigurator (x/y/value metric keys). */
-  heatmap?: { x?: string; y?: string; value?: string };
-}
-
-// =============================================================================
-// Map Panel
-// =============================================================================
-
-export interface MapPanelConfig extends BasePanelConfig {
-  centerLat?: number;
-  centerLng?: number;
-  zoom?: number;
-  latMetric?: string;
-  lngMetric?: string;
-  showPath?: boolean;
-  pathColor?: string;
-  markerColor?: string;
-  coordinateFormat?: "decimal" | "dms";
-  /** Maximum trail points to render (default 200) */
-  maxTrailPoints?: number;
-  /** Selected device source IDs (shared with fleet-grid / fleet-table). */
-  fleetSources?: string[];
-}
-
-// =============================================================================
-// Radar Panel
-// =============================================================================
-
-export interface RadarPanelConfig extends BasePanelConfig {
-  showSweep?: boolean;
-  maxPoints?: number;
-  maxRange?: number;
-}
-
-// =============================================================================
 // Earth Panel
 // =============================================================================
 
@@ -209,17 +158,6 @@ export interface GanttPanelConfig extends BasePanelConfig {
 }
 
 // =============================================================================
-// Text Panel
-// =============================================================================
-
-export interface TextPanelConfig extends BasePanelConfig {
-  content?: string;
-  fontSize?: "sm" | "base" | "lg" | "xl" | "2xl";
-  align?: "left" | "center" | "right";
-  verticalCenter?: boolean;
-}
-
-// =============================================================================
 // Video Panel
 // =============================================================================
 
@@ -234,16 +172,6 @@ export interface VideoPanelConfig extends BasePanelConfig {
   autoplay?: boolean;
   loop?: boolean;
   muted?: boolean;
-}
-
-// =============================================================================
-// Video Telemetry Panel
-// =============================================================================
-
-export interface VideoTelemetryPanelConfig extends BasePanelConfig {
-  sourceId?: string;
-  cameraId?: string;
-  frameRate?: number;
 }
 
 // =============================================================================
@@ -313,23 +241,6 @@ export interface ListPanelConfig extends BasePanelConfig {
 }
 
 // =============================================================================
-// Calendar Panel
-// =============================================================================
-
-export interface CalendarPanelConfig extends BasePanelConfig {
-  events?: Array<{
-    id: string;
-    title: string;
-    date: string;
-    color?: string;
-  }>;
-  eventMetric?: string;
-  dateMetric?: string;
-  showEventCount?: boolean;
-  highlightColor?: string;
-}
-
-// =============================================================================
 // Satellite Info Panel
 // =============================================================================
 
@@ -337,85 +248,6 @@ export interface SatelliteInfoPanelConfig extends BasePanelConfig {
   sourceId?: string;
   connectionId?: string;
   tleQuery?: string;
-}
-
-// =============================================================================
-// Model 3D Panel
-// =============================================================================
-
-export interface Model3DPanelConfig extends BasePanelConfig {
-  modelUrl?: string;
-  modelType?: "stl" | "obj" | "gltf" | "glb";
-  wireframe?: boolean;
-  autoRotate?: boolean;
-  pitchMetric?: string;
-  rollMetric?: string;
-  yawMetric?: string;
-  model3dPartBindings?: Model3DPartBinding[];
-  model3dColorScale?: ColorScaleName;
-  model3dAutoRange?: boolean;
-  model3dMinValue?: number;
-  model3dMaxValue?: number;
-  /** Phase 2: unified bindings (read-preferred over model3dPartBindings) */
-  bindings?: TelemetryBinding[];
-  /** Per-group visibility map keyed by Object3D name */
-  modelLayerVisibility?: Record<string, boolean>;
-  /** Show floating value callouts anchored to bound mesh parts */
-  showCallouts?: boolean;
-  /** Show hairline leader lines from callout to mesh */
-  showLeaderLines?: boolean;
-  // CAD-style rendering & motion
-  cadStyle?: boolean;
-  backgroundColor?: string;
-  modelRotationOffset?: [number, number, number];
-  partScales?: Record<string, number>;
-  partSpins?: Record<string, { axis: "x" | "y" | "z"; speed: number }>;
-  fixedParts?: string[];
-  positionXMetric?: string;
-  positionYMetric?: string;
-  positionZMetric?: string;
-  positionScale?: number;
-}
-
-// =============================================================================
-// Image Panel
-// =============================================================================
-
-export interface ImagePanelConfig extends BasePanelConfig {
-  imageUrl?: string;
-  imageCaption?: string;
-  imageFit?: "contain" | "cover";
-}
-
-// =============================================================================
-// Schematic Panel
-// =============================================================================
-
-export interface SchematicPanelConfig extends BasePanelConfig {
-  /** Public URL to the uploaded SVG (Supabase Storage). */
-  schematicSvgUrl?: string;
-  /** Cached viewBox string ("minX minY width height") captured at upload. */
-  schematicViewBox?: string;
-  /** Pins/anchors bound to live telemetry. */
-  schematicBindings?: TelemetryBinding[];
-  /** Render label chips above values (default true). */
-  schematicShowLabels?: boolean;
-  /** Render hairline connectors from pin to callout (default true). */
-  schematicShowConnectors?: boolean;
-  /** Opacity of the underlying schematic SVG (default 1). */
-  schematicBackgroundOpacity?: number;
-}
-
-// =============================================================================
-// Attitude Panel
-// =============================================================================
-
-export interface AttitudePanelConfig extends BasePanelConfig {
-  /** Named-slot bindings set by AttitudeConfigurator (roll/pitch/yaw metric keys). */
-  attitude?: { roll?: string; pitch?: string; yaw?: string };
-  /** Optional background image URL — rendered behind the instrument. */
-  backgroundImage?: string;
-  backgroundImageOpacity?: number; // 0..1, default 0.5
 }
 
 // =============================================================================
@@ -435,25 +267,6 @@ export interface AlertsPanelConfig extends BasePanelConfig {
 export interface DataGridPanelConfig extends BasePanelConfig {
   showTable?: boolean;
   aggregation?: Aggregation;
-}
-
-// =============================================================================
-// Fleet Grid Panel
-// =============================================================================
-
-export interface FleetGridPanelConfig extends BasePanelConfig {
-  /** Selected device source IDs. */
-  fleetSources?: string[];
-  // Column-role overrides (auto-detected from the query result when unset —
-  // see fleet-grid-panel.tsx header for the detection defaults).
-  titleColumn?: string;
-  subtitleColumn?: string;
-  stateColumn?: string;
-  metricColumn?: string;
-  metricLabel?: string;
-  metricUnit?: string;
-  severityColumn?: string;
-  timestampColumn?: string;
 }
 
 // =============================================================================
@@ -574,28 +387,17 @@ export interface PanelConfigMap {
   scatter: ChartPanelConfig;
   "assoc-scatter": AssocScatterPanelConfig;
   stat: StatPanelConfig;
-  heatmap: HeatmapPanelConfig;
   datagrid: DataGridPanelConfig;
-  "fleet-grid": FleetGridPanelConfig;
   "fleet-table": FleetTablePanelConfig;
-  radar: RadarPanelConfig;
-  attitude: AttitudePanelConfig;
-  model3d: Model3DPanelConfig;
   earth: EarthPanelConfig;
   "satellite-info": SatelliteInfoPanelConfig;
-  text: TextPanelConfig;
   video: VideoPanelConfig;
-  "video-telemetry": VideoTelemetryPanelConfig;
-  map: MapPanelConfig;
-  calendar: CalendarPanelConfig;
   list: ListPanelConfig;
   gantt: GanttPanelConfig;
   alerts: AlertsPanelConfig;
   events: EventsPanelConfig;
   devices: DevicesPanelConfig;
   dashboard: DashboardPanelConfig;
-  schematic: SchematicPanelConfig;
-  image: ImagePanelConfig;
   event_log: EventLogPanelConfig;
 }
 

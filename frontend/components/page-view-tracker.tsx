@@ -1,19 +1,36 @@
 "use client";
 
 /**
- * App-wide page-view beacons — the product dogfooding plexus-typescript.
+ * App-wide page-view beacons — the product dogfooding its own ingest.
  * Fires one `page_view` per route change to /api/plexus (which holds the
- * key; nothing sensitive ships to the browser). Dynamic segments are
- * normalized against the feature registry so tag cardinality stays flat:
- * /devices/drone-001 → /devices/:id, /dashboards/<uuid>/settings →
- * /dashboards/:id/settings.
+ * key and forwards to the gateway; nothing sensitive ships to the
+ * browser). Dynamic segments are normalized against the feature registry
+ * so tag cardinality stays flat: /devices/drone-001 → /devices/:id,
+ * /dashboards/<uuid>/settings → /dashboards/:id/settings.
  */
 import { useEffect, useRef } from "react";
 import { usePathname } from "next/navigation";
-import { createBrowserClient } from "plexus-typescript/browser";
 import { FEATURES } from "@/lib/features";
 
-const plexus = createBrowserClient({ url: "/api/plexus" });
+/** sendBeacon survives page unload; keepalive fetch is the fallback. */
+function beacon(metric: string, value: number, tags: Record<string, string>) {
+  const body = JSON.stringify({ metric, value, tags });
+  if (
+    typeof navigator.sendBeacon === "function" &&
+    navigator.sendBeacon(
+      "/api/plexus",
+      new Blob([body], { type: "application/json" }),
+    )
+  ) {
+    return;
+  }
+  fetch("/api/plexus", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body,
+    keepalive: true,
+  }).catch(() => {});
+}
 
 const FEATURE_ROOTS = new Set(
   Object.values(FEATURES)
@@ -27,13 +44,11 @@ export function normalizePath(pathname: string): string {
   if (segments.length === 0) return "/";
   const root = segments[0]!;
   if (!FEATURE_ROOTS.has(root)) return `/${root}`;
-  const rest = segments
-    .slice(1)
-    .map((s) =>
-      // Static tab/sub-page names are short lowercase words; ids and slugs
-      // (uuids, drone-001, sat-25544) carry digits or dashes.
-      /^[a-z]+$/.test(s) && s.length <= 20 ? s : ":id",
-    );
+  const rest = segments.slice(1).map((s) =>
+    // Static tab/sub-page names are short lowercase words; ids and slugs
+    // (uuids, drone-001, sat-25544) carry digits or dashes.
+    /^[a-z]+$/.test(s) && s.length <= 20 ? s : ":id",
+  );
   return ["", root, ...rest].join("/") || "/";
 }
 
@@ -46,7 +61,7 @@ export function PageViewTracker() {
     const page = normalizePath(pathname);
     if (page === last.current) return;
     last.current = page;
-    plexus.track("page_view", 1, { page });
+    beacon("page_view", 1, { page });
   }, [pathname]);
 
   return null;

@@ -17,18 +17,10 @@ import type { ComponentType } from "react";
 import type { KnownPanelType } from "@/lib/panels/registry";
 import type { TimeRange } from "@/lib/types/dashboard";
 import { DataConfigurator } from "./data-configurator";
-import { SchematicConfigurator } from "./schematic-configurator";
-import { Model3DConfigurator } from "./model3d-configurator";
-import { ImageConfigurator } from "./image-configurator";
-import { TextConfigurator } from "./text-configurator";
 import { VideoConfigurator } from "./video-configurator";
 import { PassthroughConfigurator } from "./passthrough-configurator";
 import { DashboardConfigurator } from "./dashboard-configurator";
-import { HeatmapConfigurator } from "./heatmap-configurator";
-import { RadarConfigurator } from "./radar-configurator";
-import { AttitudeConfigurator } from "./attitude-configurator";
 import { FleetConfigurator } from "./fleet-configurator";
-import { MapConfigurator } from "./map-configurator";
 import { EventLogConfigurator } from "./event-log-configurator";
 import type { ConfiguratorProps } from "./types";
 
@@ -43,28 +35,15 @@ const CONFIGURATORS: Record<string, ComponentType<ConfiguratorProps>> = {
   bar: DataConfigurator,
   scatter: DataConfigurator,
   gantt: DataConfigurator,
-  calendar: DataConfigurator,
   list: DataConfigurator,
   datagrid: DataConfigurator,
   "assoc-scatter": DataConfigurator,
 
-  // Named slots / single-source multi-metric
-  heatmap: HeatmapConfigurator,
-  radar: RadarConfigurator,
-  attitude: AttitudeConfigurator,
-
   // Fleet-scoped (device list is the primary binding)
-  "fleet-grid": FleetConfigurator,
   "fleet-table": FleetConfigurator,
-  map: MapConfigurator,
 
   // Media
-  schematic: SchematicConfigurator,
-  model3d: Model3DConfigurator,
-  image: ImageConfigurator,
-  text: TextConfigurator,
   video: VideoConfigurator,
-  "video-telemetry": VideoConfigurator,
 
   // Nested
   dashboard: DashboardConfigurator,

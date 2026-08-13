@@ -32,7 +32,6 @@ import {
   Gauge,
   Zap,
   Globe,
-  MapPin,
   BarChart3,
   WifiOff,
 } from "lucide-react";
@@ -83,18 +82,6 @@ const vizPresets = [
         showClouds: true,
         showAtmosphere: true,
       },
-    },
-  },
-  {
-    key: "map",
-    label: "Map View",
-    icon: MapPin,
-    color: "text-emerald-500",
-    borderColor:
-      "border-emerald-500/50 bg-emerald-500/5 ring-1 ring-emerald-500/20",
-    config: {
-      panel_type: "map",
-      panel_config: {},
     },
   },
   {

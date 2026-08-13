@@ -9,19 +9,18 @@ actually want to look at.
 This is the platform monorepo. Every service that makes up Plexus lives here
 and is versioned as one unit:
 
-| Dir | Service | Runs as |
-| --- | --- | --- |
-| `gateway/` | WebSocket/HTTP telemetry ingest | Go binary, port 8080 |
+| Dir           | Service                                       | Runs as                    |
+| ------------- | --------------------------------------------- | -------------------------- |
+| `gateway/`    | WebSocket/HTTP telemetry ingest               | Go binary, port 8080       |
 | `clickhouse/` | Storage: ClickHouse packaging + stream loader | ClickHouse + Python loader |
-| `frontend/` | The app — dashboards, alerts, settings | Next.js, port 3000 |
-| `api/` | Read API for `plx_` keys | FastAPI, port 8000 |
-| `houston/` | Alert engine | Go binary |
-| `selfhost/` | One-command self-host bundle | docker compose |
+| `frontend/`   | The app — dashboards, alerts, settings        | Next.js, port 3000         |
+| `api/`        | Read API for `plx_` keys                      | FastAPI, port 8000         |
+| `houston/`    | Alert engine                                  | Go binary                  |
+| `selfhost/`   | One-command self-host bundle                  | docker compose             |
 
 The device SDKs are separate repos under Apache-2.0 (code that ships inside
 your hardware should have no strings):
-[plexus-python](https://github.com/plexus-oss/plexus-python) ·
-[plexus-typescript](https://github.com/plexus-oss/plexus-typescript)
+[plexus-python](https://github.com/plexus-oss/plexus-python)
 
 ## Self-host
 
@@ -39,18 +38,18 @@ Source-available under the [Elastic License 2.0](LICENSE) — all code, free
 and enterprise features alike, lives in this repo. Enterprise features are
 unlocked by an offline license key; a single team never hits a paywall.
 
-| | Free | Enterprise |
-|---|---|---|
-| Ingest, storage, dashboards, instruments, alerts | ✓ | ✓ |
-| Single-team auth | ✓ | ✓ |
-| Grafana dashboard import | ✓ | ✓ |
-| Self-hosting (no caps, no phone-home) | ✓ | ✓ |
-| SSO / SAML / SCIM | | key |
-| RBAC + fine-grained permissions | | key |
-| Audit logs | | key |
-| Multi-tenancy | | key |
-| Air-gapped release channel + CVE SLA | | key |
-| Support entitlements | | key |
+|                                                  | Free | Enterprise |
+| ------------------------------------------------ | ---- | ---------- |
+| Ingest, storage, dashboards, instruments, alerts | ✓    | ✓          |
+| Single-team auth                                 | ✓    | ✓          |
+| Grafana dashboard import                         | ✓    | ✓          |
+| Self-hosting (no caps, no phone-home)            | ✓    | ✓          |
+| SSO / SAML / SCIM                                |      | key        |
+| RBAC + fine-grained permissions                  |      | key        |
+| Audit logs                                       |      | key        |
+| Multi-tenancy                                    |      | key        |
+| Air-gapped release channel + CVE SLA             |      | key        |
+| Support entitlements                             |      | key        |
 
 Plain-language details: [docs/licensing.md](docs/licensing.md). Buying,
 installing, and renewing a key: [docs/enterprise.md](docs/enterprise.md).

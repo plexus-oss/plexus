@@ -83,16 +83,17 @@ describe("SatNOGS fixtures", () => {
     expect(conversion.report.schemaVersion).toBe(41);
     // 69 panels: 10 titled rows + 2 text + 33 timeseries + 16 stat + 7 gauge + 1 bargauge
     expect(conversion.report.totalPanels).toBe(69);
-    expect(conversion.report.mapped).toBe(69);
-    expect(conversion.report.skipped).toBe(0);
+    // Rows and text panels are skipped (Plexus has no text panel).
+    expect(conversion.report.mapped).toBe(57);
+    expect(conversion.report.skipped).toBe(12);
 
     const counts = typeCounts(conversion);
     // 33 line-drawStyle timeseries → line charts
     expect(counts.line).toBe(33);
     // 16 stat + 7 gauge + 1 bargauge → 24 stat tiles
     expect(counts.stat).toBe(24);
-    // 2 markdown text panels + 10 titled rows as section headers
-    expect(counts.text).toBe(12);
+    // No text panels are produced anymore.
+    expect(counts.text).toBeUndefined();
 
     // Gauges carry their lossy-mapping note.
     const gauge = conversion.report.panels.find((e) => e.grafanaType === "gauge");
@@ -292,7 +293,7 @@ describe("hostile input", () => {
     ).toBe(true);
   });
 
-  it("skips text panels without content, imports text panels with content", () => {
+  it("skips text panels (Plexus has no text panel)", () => {
     const conversion = convertGrafanaDashboard({
       panels: [
         { type: "text", title: "empty", gridPos: { x: 0, y: 0, w: 6, h: 4 } },
@@ -307,10 +308,10 @@ describe("hostile input", () => {
     expectAccountedFor(conversion);
     const [empty, notes] = conversion.report.panels;
     expect(empty.outcome).toBe("skipped");
-    expect(empty.reason).toContain("no content");
-    expect(notes.outcome).toBe("mapped");
-    const panel = conversion.panels.find((p) => p.id === notes.panelId);
-    expect(panel?.config.content).toBe("# Ops notes");
+    expect(empty.reason).toContain("unsupported panel type");
+    expect(notes.outcome).toBe("skipped");
+    expect(notes.reason).toContain("unsupported panel type");
+    expect(conversion.panels).toHaveLength(0);
   });
 
   it("extracts metric identities across query languages", () => {

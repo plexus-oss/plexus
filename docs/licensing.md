@@ -1,7 +1,7 @@
 # Licensing
 
-*Plain-language guide for engineers evaluating Plexus. Not legal advice; the
-[LICENSE](../LICENSE) file is the actual license.*
+_Plain-language guide for engineers evaluating Plexus. Not legal advice; the
+[LICENSE](../LICENSE) file is the actual license._
 
 ## The short version
 
@@ -10,8 +10,7 @@ All of the code is in the open — free features and enterprise features alike.
 Enterprise features are switched on by a license key; nothing is hidden in a
 separate private repo.
 
-The SDKs that run on your hardware ([plexus-python](https://github.com/plexus-oss/plexus-python),
-[plexus-typescript](https://github.com/plexus-oss/plexus-typescript)) are
+The SDKs that run on your hardware ([plexus-python](https://github.com/plexus-oss/plexus-python) are
 **Apache-2.0** — permissive, no strings, because code you flash onto your own
 devices should never have strings.
 

@@ -62,7 +62,6 @@ const CHART_TYPES_WITH_AGGREGATION: PanelType[] = [
   "area",
   "bar",
   "scatter",
-  "heatmap",
 ];
 
 export function PanelEditSidebar({

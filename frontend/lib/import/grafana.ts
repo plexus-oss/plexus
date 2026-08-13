@@ -363,8 +363,7 @@ const DIRECT_TYPE_MAP: Record<string, string> = {
   singlestat: "stat",
   table: "datagrid",
   "table-old": "datagrid",
-  heatmap: "heatmap",
-  text: "text",
+  heatmap: "line",
   logs: "list",
   alertlist: "alerts",
   piechart: "bar",
@@ -372,6 +371,7 @@ const DIRECT_TYPE_MAP: Record<string, string> = {
 };
 
 const DIRECT_TYPE_NOTES: Record<string, string> = {
+  heatmap: "heatmap imported as a line chart (no heatmap panel in Plexus)",
   singlestat: "legacy singlestat imported as a stat tile",
   piechart: "pie chart imported as a bar chart (no pie panel in Plexus)",
   barchart: "category bar chart imported as a bar chart",
@@ -617,12 +617,6 @@ function buildPanelConfig(
       config.stacked = true;
     }
   }
-  if (plexusType === "text") {
-    const options = isDict(raw.options) ? raw.options : {};
-    const content =
-      asString(options.content) ?? asString(raw.content) ?? "";
-    config.content = content;
-  }
   return config;
 }
 
@@ -708,26 +702,7 @@ export function convertGrafanaDashboard(input: unknown): GrafanaConversion {
     // Belt-and-braces: a single hostile panel must never sink the import.
     try {
       if (grafanaType === "row") {
-        const rowTitle = panelTitle(raw);
-        if (!rowTitle) {
-          entry.reason = "layout-only row (no title) — section merged into layout";
-          continue;
-        }
-        // Titled rows become full-width section headers.
-        const id = `grafana-${panels.length + 1}`;
-        const layout = convertGridPos(raw, yOffset, entry.notes);
-        panels.push({
-          id,
-          type: "text",
-          title: "",
-          metrics: [],
-          config: { content: `### ${rowTitle}`, verticalCenter: true },
-          layout: { ...layout, w: 24, x: 0, h: 2 },
-        });
-        entry.outcome = "mapped";
-        entry.plexusType = "text";
-        entry.panelId = id;
-        entry.notes.push("row rendered as a section-header text panel");
+        entry.reason = "layout-only row — section merged into layout";
         continue;
       }
 
@@ -748,15 +723,7 @@ export function convertGrafanaDashboard(input: unknown): GrafanaConversion {
         continue;
       }
 
-      // Text panels with no content have nothing to show.
-      if (mapping.type === "text") {
-        const options = isDict(raw.options) ? raw.options : {};
-        const content = asString(options.content) ?? asString(raw.content);
-        if (!content || content.trim().length === 0) {
-          entry.reason = "text panel with no content";
-          continue;
-        }
-      } else if (metrics.length === 0 && mapping.type !== "alerts") {
+      if (metrics.length === 0 && mapping.type !== "alerts") {
         // Data panels whose queries yielded no extractable metric identity
         // still import — as clearly-unbound panels the user wires up later.
         entry.notes.push(

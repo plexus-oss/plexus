@@ -10,23 +10,14 @@ import { BarConfig } from "./bar-config";
 import { ScatterConfig } from "./scatter-config";
 import { AssocScatterConfig } from "./assoc-scatter-config";
 import { StatConfig } from "./stat-config";
-import { HeatmapConfig } from "./heatmap-config";
-import { RadarConfig } from "./radar-config";
 import { GanttConfig } from "./gantt-config";
-import { TextConfig } from "./text-config";
 import { VideoConfig } from "./video-config";
-import { VideoTelemetryConfig } from "./video-telemetry-config";
-import { MapConfig } from "./map-config";
-import { CalendarConfig } from "./calendar-config";
 import { ListConfig } from "./list-config";
 import { DashboardPanelConfig } from "./dashboard-panel-config";
 import { EarthConfig } from "./earth-config";
 import { SatelliteInfoConfig } from "./satellite-info-config";
-import { Model3DConfig } from "./model3d-config";
 import { AlertsConfig } from "./alerts-config";
 import { EventsConfig } from "./events-config";
-import { SchematicConfig } from "./schematic-config";
-import { ImageConfig } from "./image-config";
 
 interface ConfigSectionProps {
   config: Record<string, unknown>;
@@ -37,7 +28,7 @@ interface ConfigSectionProps {
 /**
  * Maps panel type → config component.
  * Every panel type with configurable options is listed here.
- * Types not listed (e.g. attitude, datagrid) auto-configure from metrics.
+ * Types not listed (e.g. datagrid) auto-configure from metrics.
  */
 // Legitimately partial — types not listed have no type-specific config.
 // `satisfies` still kills typo'd keys.
@@ -50,23 +41,14 @@ const CONFIG_COMPONENTS: Partial<
   scatter: ScatterConfig,
   "assoc-scatter": AssocScatterConfig,
   stat: StatConfig,
-  heatmap: HeatmapConfig,
-  radar: RadarConfig,
   gantt: GanttConfig,
-  text: TextConfig,
   video: VideoConfig,
-  "video-telemetry": VideoTelemetryConfig,
-  map: MapConfig,
-  calendar: CalendarConfig,
   list: ListConfig,
   alerts: AlertsConfig,
   events: EventsConfig,
   dashboard: DashboardPanelConfig,
   earth: EarthConfig,
   "satellite-info": SatelliteInfoConfig,
-  model3d: Model3DConfig,
-  schematic: SchematicConfig,
-  image: ImageConfig,
 } satisfies Partial<Record<KnownPanelType, ComponentType<ConfigSectionProps>>>;
 
 interface PanelConfigSectionProps {
