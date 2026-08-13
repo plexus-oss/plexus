@@ -189,6 +189,11 @@ services:
       RESEND_API_KEY: ${RESEND_API_KEY:-}
       RESEND_FROM_ADDRESS: ${RESEND_FROM_ADDRESS:-}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      # Local model for chart labeling. From inside the container, the host's
+      # Ollama is host.docker.internal:11434. When set, labeling never falls
+      # back to any cloud API.
+      OLLAMA_URL: ${OLLAMA_URL:-}
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-}
       # Enterprise license key (optional; missing = free tier, silently).
       PLEXUS_LICENSE: ${PLEXUS_LICENSE:-}
       # Icon/context uploads land in the bundled MinIO. With S3 tiering off

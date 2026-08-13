@@ -35,11 +35,17 @@ export interface OllamaChatJsonArgs {
 /**
  * POST /api/chat with `stream: false`, `format: schema`, temperature 0, and
  * parse `message.content` as JSON. Returns the parsed object plus the model
- * name that actually served the request.
+ * name that actually served the request, and Ollama's token accounting
+ * (prompt_eval_count / eval_count) when the server reports it.
  */
 export async function ollamaChatJson<T>(
   args: OllamaChatJsonArgs,
-): Promise<{ result: T; model: string }> {
+): Promise<{
+  result: T;
+  model: string;
+  promptEvalCount?: number;
+  evalCount?: number;
+}> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
 
@@ -75,6 +81,8 @@ export async function ollamaChatJson<T>(
   const data = (await res.json()) as {
     model?: string;
     message?: { content?: string };
+    prompt_eval_count?: number;
+    eval_count?: number;
   };
   const content = data.message?.content;
   if (!content) throw new Error("Ollama returned an empty message");
@@ -85,5 +93,10 @@ export async function ollamaChatJson<T>(
   } catch {
     throw new Error("Ollama returned non-JSON content");
   }
-  return { result: parsed, model: data.model || OLLAMA_MODEL };
+  return {
+    result: parsed,
+    model: data.model || OLLAMA_MODEL,
+    promptEvalCount: data.prompt_eval_count,
+    evalCount: data.eval_count,
+  };
 }

@@ -54,6 +54,12 @@ set `PLEXUS_LICENSE` in `.env`. Details: `../docs/licensing.md`.
   option (no var at all) keeps running MinIO as it always did. The
   ClickHouse storage policy is baked into the tables at first boot, so
   flipping the var later only affects a fresh `ch_data` volume.
+- **Local-model labeling (Ollama):** set `OLLAMA_URL=http://host.docker.internal:11434`
+  (and optionally `OLLAMA_MODEL`, default `llama3.2` — `llama3.1:8b` recommended) in
+  `.env` to enable the Label action on chart panels against a model on your own
+  machine. With `OLLAMA_URL` set, labeling never contacts any cloud API — a local
+  model failure is an error, not a fallback. Without it, labeling uses the
+  `ANTHROPIC_API_KEY` if configured, or the button stays hidden.
 - **Sign-in without Resend:** with no `RESEND_API_KEY`, the 6-digit sign-in
   code is printed to `docker compose logs frontend`. Fine for a first run;
   set a key for real email delivery.

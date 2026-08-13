@@ -1,7 +1,12 @@
 /**
- * POST /api/assistant/label — propose annotations for a chart window via a
- * LOCAL Ollama model (structured outputs). Read-only: the model only proposes;
- * the user applies each observation through the normal annotations API.
+ * POST /api/assistant/label — propose annotations for a chart window via the
+ * configured labeling provider (LOCAL Ollama when OLLAMA_URL is set, else
+ * Anthropic when ANTHROPIC_API_KEY is set — see lib/ai/label/provider.ts).
+ * Read-only: the model only proposes; the user applies each observation
+ * through the normal annotations API.
+ *
+ * GET /api/assistant/label — availability check ({available, provider}),
+ * env-only, no network probe. The UI renders the Label button off this.
  *
  * Auth/access mirrors /api/telemetry/batch-query: dual auth, org scoping, and
  * filterAccessibleSlugs over the qualified "slug:metric" keys.
@@ -16,7 +21,13 @@ import { filterAccessibleSlugs } from "@/lib/access/sources";
 import { annotationQueries } from "@/lib/db/queries/misc";
 import { sourceContextQueries } from "@/lib/db";
 import { findSourceByRef } from "@/lib/api/find-source";
-import { ollamaChatJson, OllamaUnavailableError } from "@/lib/ai/label/ollama";
+import { OllamaUnavailableError } from "@/lib/ai/label/ollama";
+import {
+  resolveLabelProvider,
+  runLabelModel,
+  type LabelProvider,
+} from "@/lib/ai/label/provider";
+import { recordAiTokens } from "@/lib/ai/usage";
 import {
   buildLabelPrompt,
   clampObservations,
@@ -131,15 +142,27 @@ export const POST = withDualAuth(
     let observations;
     let remember;
     let model: string;
+    let provider: LabelProvider;
     try {
-      const reply = await ollamaChatJson<unknown>({
+      const reply = await runLabelModel({
         system: LABEL_SYSTEM_PROMPT,
-        user: prompt,
+        prompt,
         schema: LABEL_RESPONSE_SCHEMA,
       });
       model = reply.model;
+      provider = reply.provider;
       observations = clampObservations(reply.result, body.start, body.end);
       remember = clampRemember(reply.result);
+      // Anthropic usage is billable AI COGS — record it like the Terminal and
+      // column annotator do. Ollama usage is local and never billed.
+      if (reply.provider === "anthropic" && reply.usage) {
+        recordAiTokens(
+          orgId,
+          reply.model,
+          reply.usage.input_tokens,
+          reply.usage.output_tokens,
+        );
+      }
     } catch (err) {
       if (err instanceof OllamaUnavailableError) {
         return NextResponse.json(
@@ -159,6 +182,7 @@ export const POST = withDualAuth(
         orgId,
         userId: userId ?? null,
         model,
+        provider,
         metrics,
         window: { start: body.start, end: body.end },
         count: observations.length,
@@ -169,3 +193,12 @@ export const POST = withDualAuth(
     return NextResponse.json({ observations, remember, model });
   },
 );
+
+/**
+ * Availability check for the UI: which provider (if any) a labeling request
+ * would use right now. Cheap env check only — no network probe.
+ */
+export const GET = withDualAuth(async () => {
+  const provider = resolveLabelProvider();
+  return NextResponse.json({ available: provider !== null, provider });
+});

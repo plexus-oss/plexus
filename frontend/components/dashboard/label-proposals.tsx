@@ -1,8 +1,10 @@
 "use client";
 
 /**
- * "Label" action for chart panels: sends the visible window's series to a
- * LOCAL Ollama model and renders its observations as proposal cards. The
+ * "Label" action for chart panels: sends the visible window's series to the
+ * configured labeling model (local Ollama, or Anthropic when no OLLAMA_URL is
+ * set) and renders its observations as proposal cards. The button renders
+ * only when a provider is available (GET /api/assistant/label). The
  * model never mutates anything — the user Applies (→ annotation via the
  * existing annotations path, so the chart overlay updates live) or Dismisses
  * each proposal, and every verdict is logged server-side. The model may also
@@ -21,6 +23,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
 import { useAnnotations } from "@/hooks/use-annotations";
+import { useLabelAvailability } from "@/hooks/use-label-availability";
 import { useUserSettings } from "@/context/user-settings-context";
 import { formatTimeInZone } from "@/lib/timezone";
 import { toast } from "@/lib/toast-utils";
@@ -46,6 +49,7 @@ interface Memory extends RememberProposal {
 
 export function LabelProposals({ metrics, timeWindow, sourceId }: LabelProposalsProps) {
   const { settings } = useUserSettings();
+  const { available, provider } = useLabelAvailability();
   const { createAnnotation } = useAnnotations({ sourceId });
   const [loading, setLoading] = useState(false);
   const [proposals, setProposals] = useState<Proposal[] | null>(null);
@@ -219,6 +223,11 @@ export function LabelProposals({ metrics, timeWindow, sourceId }: LabelProposals
 
   const open = proposals !== null || memories !== null;
 
+  // No provider configured (no local Ollama, no Anthropic key) — no button.
+  // The POST route's 503 toast remains the runtime fallback if availability
+  // changes between render and click.
+  if (!available) return null;
+
   return (
     <Popover
       open={open}
@@ -240,7 +249,11 @@ export function LabelProposals({ metrics, timeWindow, sourceId }: LabelProposals
               : "text-muted-foreground hover:text-foreground hover:bg-muted/50",
             loading && "pointer-events-none",
           )}
-          title="Label with local model"
+          title={
+            provider === "anthropic"
+              ? "Label with AI"
+              : "Label with local model"
+          }
         >
           {loading ? (
             <Spinner className="h-3.5 w-3.5 border-[0.12em]" />
@@ -256,7 +269,9 @@ export function LabelProposals({ metrics, timeWindow, sourceId }: LabelProposals
             Proposed labels
           </p>
           <p className="text-[11px] text-muted-foreground">
-            From your local model — apply to annotate the chart
+            {provider === "anthropic"
+              ? "From the model — apply to annotate the chart"
+              : "From your local model — apply to annotate the chart"}
           </p>
         </div>
         <div className="max-h-72 overflow-y-auto">
