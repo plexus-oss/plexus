@@ -29,10 +29,6 @@ class Settings(BaseSettings):
 
     app_url: str = "https://app.plexus.company"
 
-    # Public base URL of THIS service — used in OAuth protected-resource
-    # metadata (RFC 9728) so MCP clients discover the authorization server.
-    public_url: str = "https://api.plexus.company"
-
     video_stream_timeout: int = 600  # seconds; per-session override via ?timeout=
 
 

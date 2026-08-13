@@ -15,24 +15,10 @@ Routing is settled: `/v1/sources/*` is canonical (`app/api/v1/sources.py`);
 unlike a 301). WebSocket streams have **no** `/v1/devices` alias — use `/v1/sources/...`
 directly. Matches `../GLOSSARY.md`.
 
-**MCP server**: `POST /mcp` is a stateless Streamable HTTP MCP endpoint
-(`app/mcp/`, official `mcp` SDK, `json_response=True` — required, the Dockerfile runs
-2 uvicorn workers). Auth is `Authorization: Bearer plx_...` validated by
-`app/mcp/auth.py` (mirrors `require_auth`: 401/402/dev_mode); the raw key is kept in a
-contextvar because the dashboard tools proxy the frontend's `/api/dashboards*` routes
-and `send_telemetry` relays to the gateway's `/ingest`, both as the caller. Served at
-exactly `/mcp` via `app/mcp/mount.py` (a Starlette Mount would 307 to `/mcp/`); the MCP
-session manager runs inside the app lifespan. OAuth discovery for claude.ai connectors: the 401 carries
-`WWW-Authenticate: Bearer resource_metadata="..."` and
-`GET /.well-known/oauth-protected-resource[/mcp]` (RFC 9728, in `app/main.py`)
-points at the frontend's authorization server (`settings.app_url`); the OAuth
-access tokens claude.ai obtains ARE plx_ keys minted by the frontend, so
-validation here is unchanged. **`/mcp` and the well-known routes are
-deliberately absent from `openapi.json`** (mounts/`include_in_schema=False` —
-regenerate and expect zero diff).
-Tool modules: `app/mcp/tools/*.py`; the panel-type allowlist in `tools/dashboards.py`
-must stay in sync with `frontend/lib/panels/registry.ts`. Tests: `tests/`
-(`uv run --extra dev pytest`).
+**MCP server: REMOVED.** This service used to mount a Streamable HTTP MCP endpoint at
+`/mcp` (with RFC 9728 `/.well-known/oauth-protected-resource` discovery routes); it was
+removed entirely along with `app/mcp/`, the `mcp` dependency, and the `public_url`
+setting. Don't reintroduce it. Tests: `tests/` (`uv run --extra dev pytest`).
 
 Known debt: the WS auth + gateway-proxy blocks are triplicated across
 `metrics.py` / `logs.py` / `video.py` — left as-is (no test coverage); consolidate

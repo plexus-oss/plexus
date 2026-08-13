@@ -74,12 +74,6 @@ const PUBLIC_ROUTE_PATTERNS = [
   "/api/authjs(.*)",
   "/api/webhooks(.*)",
   "/api/cron(.*)",
-  // OAuth 2.1 authorization server (MCP connector): metadata, registration,
-  // and token exchange are anonymous by design. The /oauth/authorize consent
-  // page and /api/oauth/authorize approve route stay session-gated.
-  "/.well-known/oauth-authorization-server",
-  "/api/oauth/register",
-  "/api/oauth/token",
   "/shared(.*)",
   "/api/shared(.*)",
   "/api/alerts(.*)",

@@ -11,10 +11,6 @@ from app.api.v1 import router as v1_router
 from app.core.config import settings
 from app.core.database import engine
 from app.core.dependencies import require_internal
-from app.mcp import runtime as mcp_runtime
-from app.mcp.auth import McpAuthMiddleware
-from app.mcp.mount import McpPathMiddleware
-from app.mcp.server import mcp
 from app.services.clickhouse import ClickHouseService
 from app.services.gateway import GatewayService
 
@@ -29,25 +25,14 @@ async def lifespan(app: FastAPI):
 
     app.state.gateway = GatewayService()
 
-    mcp_runtime.init(app.state)
-    # Starlette's Mount never runs a sub-app's lifespan, and the MCP session
-    # manager may be entered exactly once per process — so it lives here.
-    async with mcp.session_manager.run():
-        yield
+    yield
 
-    await mcp_runtime.aclose()
     await app.state.clickhouse.aclose()
     await app.state.gateway.aclose()
     await app.state.redis.aclose()
 
 
 app = FastAPI(title="Plexus Data API", version="0.1.0", lifespan=lifespan)
-
-# MCP endpoint (Streamable HTTP, stateless), served at exactly /mcp — a plain
-# Mount would 307 bare /mcp to /mcp/. Bearer plx_ auth happens in the wrapping
-# middleware; neither appears in openapi.json. CORS is added after, so it
-# stays outermost and still covers /mcp preflights.
-app.add_middleware(McpPathMiddleware, mcp_app=McpAuthMiddleware(mcp.streamable_http_app()))
 
 app.add_middleware(
     CORSMiddleware,
@@ -77,20 +62,6 @@ async def redirect_devices(path: str, request: Request):
 @app.get("/health")
 async def health():
     return {"status": "ok"}
-
-
-# OAuth 2.0 Protected Resource Metadata (RFC 9728) for the /mcp endpoint —
-# MCP clients (claude.ai connectors) discover the authorization server here.
-# Both probe paths are served (path-inserted and root); schema-invisible so
-# openapi.json stays byte-identical.
-@app.get("/.well-known/oauth-protected-resource", include_in_schema=False)
-@app.get("/.well-known/oauth-protected-resource/mcp", include_in_schema=False)
-async def oauth_protected_resource():
-    return {
-        "resource": f"{settings.public_url}/mcp",
-        "authorization_servers": [settings.app_url],
-        "bearer_methods_supported": ["header"],
-    }
 
 
 @app.get("/health/system", include_in_schema=False, dependencies=[Depends(require_internal)])
