@@ -38,15 +38,22 @@ set `PLEXUS_LICENSE` in `.env`. Details: `../docs/licensing.md`.
 
 ## Notes
 
+- **Retention: your data is kept forever.** The cloud schema's TTL DELETE
+  clauses (which manage shared-storage cost) are stripped at first boot —
+  self-hosted telemetry, rollups, and events never expire. Bound disk
+  yourself if you want to: `ALTER TABLE plexus.<table> MODIFY TTL
+  timestamp + INTERVAL 2 YEAR DELETE`. Like the storage policy, this is
+  baked in at first boot; installs created before this change keep their
+  old TTLs unless you `MODIFY TTL` them away (`ALTER TABLE plexus.<table>
+  REMOVE TTL` per table, or recreate the `ch_data` volume).
 - **S3 tiered storage (off by default):** answering "n" runs everything on
-  local disk — no MinIO container, `storage_policy = 'default'`, and the
-  plain TTL DELETE retention is unchanged. Answering "y" adds MinIO and the
-  hot→cold rollover (7-day hot tier moving to S3), plus S3-backed
-  icon/context uploads. The choice is written to `.env` as
-  `PLEXUS_S3_TIERING`; a `.env` from before this option (no var at all) keeps
-  running MinIO as it always did. The ClickHouse storage policy is baked into
-  the tables at first boot, so flipping the var later only affects a fresh
-  `ch_data` volume.
+  local disk — no MinIO container and `storage_policy = 'default'`.
+  Answering "y" adds MinIO and the hot→cold rollover (7-day hot tier
+  moving to S3), plus S3-backed icon/context uploads. The choice is
+  written to `.env` as `PLEXUS_S3_TIERING`; a `.env` from before this
+  option (no var at all) keeps running MinIO as it always did. The
+  ClickHouse storage policy is baked into the tables at first boot, so
+  flipping the var later only affects a fresh `ch_data` volume.
 - **Sign-in without Resend:** with no `RESEND_API_KEY`, the 6-digit sign-in
   code is printed to `docker compose logs frontend`. Fine for a first run;
   set a key for real email delivery.
