@@ -40,6 +40,24 @@ export interface WindowAnnotation {
   endMs: number | null;
 }
 
+/**
+ * One user-maintained context item for a plotted source, newest-first as
+ * returned by sourceContextQueries.findBySource. `content` carries the text
+ * body for note items; file/link items pass null and contribute only their
+ * name + description lines.
+ */
+export interface SourceContextItem {
+  /** Source slug the item belongs to. */
+  slug: string;
+  name: string;
+  description: string | null;
+  content: string | null;
+}
+
+export interface RememberProposal {
+  content: string;
+}
+
 export interface LabelObservation {
   start_ms: number;
   end_ms: number | null;
@@ -51,6 +69,10 @@ export interface LabelObservation {
 export const MAX_OBSERVATIONS = 5;
 export const MAX_LABEL_LENGTH = 60;
 export const MAX_NOTE_LENGTH = 200;
+export const MAX_REMEMBER = 2;
+export const MAX_REMEMBER_LENGTH = 200;
+/** Budget for the rendered source-context section of the prompt. */
+export const MAX_CONTEXT_CHARS = 1500;
 const MAX_BUCKETS = 40;
 
 /** JSON schema for Ollama structured outputs (`format`). */
@@ -72,6 +94,21 @@ export const LABEL_RESPONSE_SCHEMA: Record<string, unknown> = {
         required: ["start_ms", "end_ms", "label", "note", "confidence"],
       },
     },
+    remember: {
+      type: "array",
+      maxItems: MAX_REMEMBER,
+      description:
+        "Durable facts about the subject worth saving for future analysis, " +
+        "ONLY if strongly supported by the visible data (e.g. a recurring " +
+        "baseline), never speculation.",
+      items: {
+        type: "object",
+        properties: {
+          content: { type: "string", maxLength: MAX_REMEMBER_LENGTH },
+        },
+        required: ["content"],
+      },
+    },
   },
   required: ["observations"],
 };
@@ -90,6 +127,12 @@ export const LABEL_SYSTEM_PROMPT = [
   "- Skip anything already covered by an existing annotation.",
   "- Return at most 5 observations; fewer, high-signal observations are",
   "  better than many weak ones. Return an empty list if nothing stands out.",
+  "- Use the provided source context to make observations specific (e.g.",
+  "  age-adjusted, goal-aware), but never invent context facts not present.",
+  "- Optionally return up to 2 remember items: durable facts about the",
+  "  subject worth saving for future analysis, ONLY if strongly supported by",
+  "  the visible data (e.g. a recurring baseline), never speculation. Omit",
+  "  them entirely when nothing qualifies.",
 ].join("\n");
 
 const round = (v: number): number =>
@@ -161,14 +204,49 @@ export function summarizeSeries(
 }
 
 /**
+ * Render the user-maintained context section: one line per item, newest first,
+ * capped at MAX_CONTEXT_CHARS of item text. When over budget the oldest items
+ * are dropped (the newest-first prefix is kept) and the cut is noted; a single
+ * oversized newest item is sliced rather than dropped.
+ */
+function renderContextLines(items: SourceContextItem[]): string[] {
+  const lines: string[] = [
+    "Context about these sources (user-maintained — treat as ground truth about the subject):",
+  ];
+  let used = 0;
+  let truncated = false;
+  for (const item of items) {
+    const body = (item.content ?? item.description ?? "").trim();
+    const line = `- [${item.slug}] ${item.name}${body ? `: ${body}` : ""}`
+      .replace(/\s+/g, " ")
+      .trim();
+    if (used + line.length > MAX_CONTEXT_CHARS) {
+      if (used === 0) {
+        lines.push(`${line.slice(0, MAX_CONTEXT_CHARS - 1)}…`);
+        used = MAX_CONTEXT_CHARS;
+      }
+      truncated = true;
+      break;
+    }
+    lines.push(line);
+    used += line.length;
+  }
+  if (truncated) lines.push("(older context truncated to fit)");
+  return lines;
+}
+
+/**
  * Compact plain-text context for the model: window bounds, per-series stats +
- * downsample, and existing annotations. Stays well under ~4k tokens.
+ * downsample, user-maintained source context, and existing annotations. Stays
+ * well under ~4k tokens.
  */
 export function buildLabelPrompt(input: {
   windowStartMs: number;
   windowEndMs: number;
   series: SeriesSummary[];
   annotations: WindowAnnotation[];
+  /** User-maintained source context, newest-first (see SourceContextItem). */
+  context?: SourceContextItem[];
 }): string {
   const lines: string[] = [
     `Window: ${input.windowStartMs} to ${input.windowEndMs} (epoch ms, UTC).`,
@@ -182,6 +260,10 @@ export function buildLabelPrompt(input: {
       "Buckets (t avg min max):",
       ...s.buckets.map((b) => `${b.t} ${b.avg} ${b.min} ${b.max}`),
     );
+  }
+
+  if (input.context && input.context.length > 0) {
+    lines.push("", ...renderContextLines(input.context));
   }
 
   lines.push("");
@@ -248,6 +330,25 @@ export function clampObservations(
       note: o.note.trim().slice(0, MAX_NOTE_LENGTH),
       confidence: o.confidence,
     });
+  }
+  return out;
+}
+
+/**
+ * Validate + clamp the model's optional remember proposals: strings only,
+ * trimmed, truncated to MAX_REMEMBER_LENGTH, at most MAX_REMEMBER survive.
+ */
+export function clampRemember(raw: unknown): RememberProposal[] {
+  const list = (raw as { remember?: unknown[] } | null)?.remember;
+  if (!Array.isArray(list)) return [];
+
+  const out: RememberProposal[] = [];
+  for (const item of list) {
+    if (out.length >= MAX_REMEMBER) break;
+    if (typeof item !== "object" || item === null) continue;
+    const content = (item as Record<string, unknown>).content;
+    if (typeof content !== "string" || content.trim().length === 0) continue;
+    out.push({ content: content.trim().slice(0, MAX_REMEMBER_LENGTH) });
   }
   return out;
 }

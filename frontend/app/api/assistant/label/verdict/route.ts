@@ -1,6 +1,7 @@
 /**
  * POST /api/assistant/label/verdict — record the user's decision on a
- * model-proposed label (applied → became an annotation, or dismissed).
+ * model proposal: a label (applied → became an annotation) or a remember
+ * memory (applied → became a source-context note), or dismissed.
  * Same auth as the label route; logs server-side and returns 204.
  */
 
@@ -10,9 +11,14 @@ import { withDualAuth } from "@/lib/api/with-auth";
 import { validateBody } from "@/lib/api/validate";
 
 const VerdictSchema = z.object({
+  /** What was judged: a chart label (default, for older clients) or a
+   * remember-memory proposal. */
+  kind: z.enum(["label", "remember"]).default("label"),
+  /** The proposal text — the label for labels, the content for memories. */
   label: z.string().min(1).max(200),
-  start_ms: z.number().int(),
-  end_ms: z.number().int().nullable(),
+  /** Window coordinates; only label verdicts carry them. */
+  start_ms: z.number().int().nullable().optional(),
+  end_ms: z.number().int().nullable().optional(),
   applied: z.boolean(),
 });
 
@@ -27,8 +33,9 @@ export const POST = withDualAuth(async (request, { orgId, userId }) => {
     JSON.stringify({
       orgId,
       userId: userId ?? null,
+      kind: body.kind,
       label: body.label,
-      window: { start: body.start_ms, end: body.end_ms },
+      window: { start: body.start_ms ?? null, end: body.end_ms ?? null },
       applied: body.applied,
     }),
   );

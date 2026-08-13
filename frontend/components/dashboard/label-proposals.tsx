@@ -5,11 +5,13 @@
  * LOCAL Ollama model and renders its observations as proposal cards. The
  * model never mutates anything — the user Applies (→ annotation via the
  * existing annotations path, so the chart overlay updates live) or Dismisses
- * each proposal, and every verdict is logged server-side.
+ * each proposal, and every verdict is logged server-side. The model may also
+ * propose "remember" memories; applying one saves it as a text context item
+ * on the panel's primary source via the existing source-context API.
  */
 
 import { useCallback, useState } from "react";
-import { Sparkles, Check, X } from "lucide-react";
+import { Sparkles, Check, X, BookmarkPlus } from "lucide-react";
 import {
   Popover,
   PopoverContent,
@@ -23,7 +25,7 @@ import { useUserSettings } from "@/context/user-settings-context";
 import { formatTimeInZone } from "@/lib/timezone";
 import { toast } from "@/lib/toast-utils";
 import { cn } from "@/lib/utils";
-import type { LabelObservation } from "@/lib/ai/label/prompt";
+import type { LabelObservation, RememberProposal } from "@/lib/ai/label/prompt";
 
 interface LabelProposalsProps {
   /** Qualified "slug:metric" keys, exactly what the chart queries with. */
@@ -38,21 +40,40 @@ interface Proposal extends LabelObservation {
   id: number;
 }
 
+interface Memory extends RememberProposal {
+  id: number;
+}
+
 export function LabelProposals({ metrics, timeWindow, sourceId }: LabelProposalsProps) {
   const { settings } = useUserSettings();
   const { createAnnotation } = useAnnotations({ sourceId });
   const [loading, setLoading] = useState(false);
   const [proposals, setProposals] = useState<Proposal[] | null>(null);
+  const [memories, setMemories] = useState<Memory[] | null>(null);
   const [applyingId, setApplyingId] = useState<number | null>(null);
+  const [applyingMemoryId, setApplyingMemoryId] = useState<number | null>(null);
 
   const sendVerdict = useCallback((p: Proposal, applied: boolean) => {
     void fetch("/api/assistant/label/verdict", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
+        kind: "label",
         label: p.label,
         start_ms: p.start_ms,
         end_ms: p.end_ms,
+        applied,
+      }),
+    }).catch(() => {});
+  }, []);
+
+  const sendMemoryVerdict = useCallback((m: Memory, applied: boolean) => {
+    void fetch("/api/assistant/label/verdict", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        kind: "remember",
+        label: m.content,
         applied,
       }),
     }).catch(() => {});
@@ -77,12 +98,23 @@ export function LabelProposals({ metrics, timeWindow, sourceId }: LabelProposals
         return;
       }
       if (!res.ok) throw new Error(`Labeling failed (${res.status})`);
-      const data = (await res.json()) as { observations: LabelObservation[] };
-      if (data.observations.length === 0) {
+      const data = (await res.json()) as {
+        observations: LabelObservation[];
+        remember?: RememberProposal[];
+      };
+      const remember = data.remember ?? [];
+      if (data.observations.length === 0 && remember.length === 0) {
         toast.info("No notable features found in this window");
         return;
       }
-      setProposals(data.observations.map((o, i) => ({ ...o, id: i })));
+      setProposals(
+        data.observations.length > 0
+          ? data.observations.map((o, i) => ({ ...o, id: i }))
+          : null,
+      );
+      setMemories(
+        remember.length > 0 ? remember.map((m, i) => ({ ...m, id: i })) : null,
+      );
     } catch {
       toast.error("Labeling failed");
     } finally {
@@ -93,6 +125,13 @@ export function LabelProposals({ metrics, timeWindow, sourceId }: LabelProposals
   const remove = useCallback((id: number) => {
     setProposals((prev) => {
       const next = (prev ?? []).filter((p) => p.id !== id);
+      return next.length > 0 ? next : null;
+    });
+  }, []);
+
+  const removeMemory = useCallback((id: number) => {
+    setMemories((prev) => {
+      const next = (prev ?? []).filter((m) => m.id !== id);
       return next.length > 0 ? next : null;
     });
   }, []);
@@ -129,6 +168,41 @@ export function LabelProposals({ metrics, timeWindow, sourceId }: LabelProposals
     [sendVerdict, remove],
   );
 
+  // Apply a memory by creating a text context item through the existing
+  // source-context API — same request shape context-tab.tsx uses for notes.
+  const handleRemember = useCallback(
+    async (m: Memory) => {
+      setApplyingMemoryId(m.id);
+      try {
+        const res = await fetch(`/api/sources/${sourceId}/context`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            context_type: "note",
+            name: "Model memory",
+            content: m.content,
+          }),
+        });
+        if (!res.ok) throw new Error(`Saving memory failed (${res.status})`);
+        sendMemoryVerdict(m, true);
+        removeMemory(m.id);
+      } catch {
+        toast.error("Failed to save memory");
+      } finally {
+        setApplyingMemoryId(null);
+      }
+    },
+    [sourceId, sendMemoryVerdict, removeMemory],
+  );
+
+  const handleDismissMemory = useCallback(
+    (m: Memory) => {
+      sendMemoryVerdict(m, false);
+      removeMemory(m.id);
+    },
+    [sendMemoryVerdict, removeMemory],
+  );
+
   const fmtRange = (p: Proposal): string => {
     const start = formatTimeInZone(
       new Date(p.start_ms),
@@ -143,11 +217,16 @@ export function LabelProposals({ metrics, timeWindow, sourceId }: LabelProposals
     )}`;
   };
 
+  const open = proposals !== null || memories !== null;
+
   return (
     <Popover
-      open={proposals !== null}
-      onOpenChange={(open) => {
-        if (!open) setProposals(null);
+      open={open}
+      onOpenChange={(next) => {
+        if (!next) {
+          setProposals(null);
+          setMemories(null);
+        }
       }}
     >
       <PopoverTrigger asChild>
@@ -156,7 +235,7 @@ export function LabelProposals({ metrics, timeWindow, sourceId }: LabelProposals
           disabled={loading}
           className={cn(
             "flex items-center gap-1.5 px-2 py-1 rounded text-xs transition-colors",
-            proposals !== null
+            open
               ? "text-foreground bg-muted"
               : "text-muted-foreground hover:text-foreground hover:bg-muted/50",
             loading && "pointer-events-none",
@@ -180,52 +259,98 @@ export function LabelProposals({ metrics, timeWindow, sourceId }: LabelProposals
             From your local model — apply to annotate the chart
           </p>
         </div>
-        <div className="max-h-72 overflow-y-auto divide-y divide-border">
-          {(proposals ?? []).map((p) => (
-            <div key={p.id} className="px-3 py-2.5 space-y-1">
-              <div className="flex items-start justify-between gap-2">
-                <span className="text-sm font-medium leading-tight">
-                  {p.label}
-                </span>
-                <Badge
-                  variant="outline"
-                  className="text-[10px] px-1.5 py-0 text-muted-foreground shrink-0"
-                >
-                  {p.confidence}
-                </Badge>
-              </div>
-              {p.note && (
-                <p className="text-xs text-muted-foreground">{p.note}</p>
-              )}
-              <div className="flex items-center justify-between gap-2 pt-0.5">
-                <span className="text-[11px] font-mono text-muted-foreground truncate">
-                  {fmtRange(p)}
-                </span>
-                <div className="flex items-center gap-1 shrink-0">
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    className="h-6 px-2 text-xs"
-                    onClick={() => handleDismiss(p)}
-                    disabled={applyingId === p.id}
-                  >
-                    <X className="h-3 w-3" />
-                    Dismiss
-                  </Button>
-                  <Button
-                    size="sm"
+        <div className="max-h-72 overflow-y-auto">
+          <div className="divide-y divide-border">
+            {(proposals ?? []).map((p) => (
+              <div key={p.id} className="px-3 py-2.5 space-y-1">
+                <div className="flex items-start justify-between gap-2">
+                  <span className="text-sm font-medium leading-tight">
+                    {p.label}
+                  </span>
+                  <Badge
                     variant="outline"
-                    className="h-6 px-2 text-xs"
-                    loading={applyingId === p.id}
-                    onClick={() => handleApply(p)}
+                    className="text-[10px] px-1.5 py-0 text-muted-foreground shrink-0"
                   >
-                    {applyingId !== p.id && <Check className="h-3 w-3" />}
-                    Apply
-                  </Button>
+                    {p.confidence}
+                  </Badge>
+                </div>
+                {p.note && (
+                  <p className="text-xs text-muted-foreground">{p.note}</p>
+                )}
+                <div className="flex items-center justify-between gap-2 pt-0.5">
+                  <span className="text-[11px] font-mono text-muted-foreground truncate">
+                    {fmtRange(p)}
+                  </span>
+                  <div className="flex items-center gap-1 shrink-0">
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      className="h-6 px-2 text-xs"
+                      onClick={() => handleDismiss(p)}
+                      disabled={applyingId === p.id}
+                    >
+                      <X className="h-3 w-3" />
+                      Dismiss
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="h-6 px-2 text-xs"
+                      loading={applyingId === p.id}
+                      onClick={() => handleApply(p)}
+                    >
+                      {applyingId !== p.id && <Check className="h-3 w-3" />}
+                      Apply
+                    </Button>
+                  </div>
                 </div>
               </div>
+            ))}
+          </div>
+          {(memories ?? []).length > 0 && (
+            <div className="border-t border-border">
+              <div className="px-3 py-2 border-b border-border">
+                <p className="flex items-center gap-1.5 text-xs font-medium text-foreground">
+                  <BookmarkPlus className="h-3.5 w-3.5" />
+                  Remember
+                </p>
+                <p className="text-[11px] text-muted-foreground">
+                  Durable facts — apply to save to this source&apos;s context
+                </p>
+              </div>
+              <div className="divide-y divide-border">
+                {(memories ?? []).map((m) => (
+                  <div key={m.id} className="px-3 py-2.5 space-y-1">
+                    <p className="text-sm leading-tight">{m.content}</p>
+                    <div className="flex items-center justify-end gap-1 pt-0.5">
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="h-6 px-2 text-xs"
+                        onClick={() => handleDismissMemory(m)}
+                        disabled={applyingMemoryId === m.id}
+                      >
+                        <X className="h-3 w-3" />
+                        Dismiss
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="h-6 px-2 text-xs"
+                        loading={applyingMemoryId === m.id}
+                        onClick={() => handleRemember(m)}
+                      >
+                        {applyingMemoryId !== m.id && (
+                          <Check className="h-3 w-3" />
+                        )}
+                        Apply
+                      </Button>
+                    </div>
+                  </div>
+                ))}
+              </div>
             </div>
-          ))}
+          )}
         </div>
       </PopoverContent>
     </Popover>

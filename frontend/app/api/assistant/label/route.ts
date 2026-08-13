@@ -14,14 +14,18 @@ import { validateBody } from "@/lib/api/validate";
 import { queryTelemetryAdaptive } from "@/lib/db/clickhouse";
 import { filterAccessibleSlugs } from "@/lib/access/sources";
 import { annotationQueries } from "@/lib/db/queries/misc";
+import { sourceContextQueries } from "@/lib/db";
+import { findSourceByRef } from "@/lib/api/find-source";
 import { ollamaChatJson, OllamaUnavailableError } from "@/lib/ai/label/ollama";
 import {
   buildLabelPrompt,
   clampObservations,
+  clampRemember,
   summarizeSeries,
   LABEL_RESPONSE_SCHEMA,
   LABEL_SYSTEM_PROMPT,
   type SeriesSummary,
+  type SourceContextItem,
   type WindowAnnotation,
 } from "@/lib/ai/label/prompt";
 
@@ -74,7 +78,7 @@ export const POST = withDualAuth(
       }),
     );
     if (series.length === 0) {
-      return NextResponse.json({ observations: [], model: null });
+      return NextResponse.json({ observations: [], remember: [], model: null });
     }
 
     // Existing annotations in the window, restricted to the plotted sources.
@@ -89,14 +93,43 @@ export const POST = withDualAuth(
         endMs: a.timestamp_end ? new Date(a.timestamp_end).getTime() : null,
       }));
 
+    // User-maintained source context for the plotted slugs — same optional
+    // enrichment pattern as lib/alerts/trigger.ts. Notes contribute their text
+    // body; file/link items contribute only name + description. Sorted
+    // newest-first overall so the prompt builder truncates oldest-first.
+    const contextItems: Array<SourceContextItem & { createdAtMs: number }> = [];
+    try {
+      await Promise.all(
+        [...slugSet].map(async (slug) => {
+          const source = await findSourceByRef(orgId, slug, isApiKeyAuth);
+          if (!source) return;
+          const rows = await sourceContextQueries.findBySource(orgId, source.id);
+          for (const c of rows) {
+            contextItems.push({
+              slug,
+              name: c.name,
+              description: c.description,
+              content: c.context_type === "note" ? c.content : null,
+              createdAtMs: new Date(c.created_at).getTime(),
+            });
+          }
+        }),
+      );
+    } catch {
+      // Context enrichment is optional
+    }
+    contextItems.sort((a, b) => b.createdAtMs - a.createdAtMs);
+
     const prompt = buildLabelPrompt({
       windowStartMs: body.start,
       windowEndMs: body.end,
       series,
       annotations,
+      context: contextItems.map(({ createdAtMs: _createdAtMs, ...item }) => item),
     });
 
     let observations;
+    let remember;
     let model: string;
     try {
       const reply = await ollamaChatJson<unknown>({
@@ -106,6 +139,7 @@ export const POST = withDualAuth(
       });
       model = reply.model;
       observations = clampObservations(reply.result, body.start, body.end);
+      remember = clampRemember(reply.result);
     } catch (err) {
       if (err instanceof OllamaUnavailableError) {
         return NextResponse.json(
@@ -128,9 +162,10 @@ export const POST = withDualAuth(
         metrics,
         window: { start: body.start, end: body.end },
         count: observations.length,
+        rememberCount: remember.length,
       }),
     );
 
-    return NextResponse.json({ observations, model });
+    return NextResponse.json({ observations, remember, model });
   },
 );
