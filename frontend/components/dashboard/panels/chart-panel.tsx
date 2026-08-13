@@ -39,6 +39,7 @@ import {
 import { AnnotationPopover } from "@/components/annotations/annotation-popover";
 import { AnnotationsPanel } from "@/components/annotations/annotations-panel";
 import { ChartAnnotationOverlay } from "@/components/dashboard/panels/chart-annotation-overlay";
+import { LabelProposals } from "@/components/dashboard/label-proposals";
 import { AlertBands } from "@/components/ui/charts/alert-bands";
 import { useAlerts } from "@/hooks/use-alerts";
 import { useRouter } from "next/navigation";
@@ -509,6 +510,24 @@ export function ChartPanel({
     },
     [router],
   );
+
+  // Local-model labeling — telemetry time-series panels only (connection and
+  // metric-vs-metric panels don't map onto slug:metric ClickHouse queries).
+  // Metrics are qualified exactly as batch-query receives them; the window is
+  // the currently rendered x-domain (falls back to the panel's time range).
+  const labelMetrics = useMemo(() => {
+    if (sourceType === "connection" || panel.config.xAxisField) return [];
+    return (displayedMetrics ?? [])
+      .map((m) => (m.includes(":") ? m : sourceId ? `${sourceId}:${m}` : m))
+      .filter((m) => m.includes(":"))
+      .slice(0, 10);
+  }, [sourceType, panel.config.xAxisField, displayedMetrics, sourceId]);
+  const labelWindow = useMemo(() => {
+    if (xDomain)
+      return { start: Math.floor(xDomain[0]), end: Math.ceil(xDomain[1]) };
+    const { start, end } = getTimeRangeBounds(timeRange);
+    return { start: start.getTime(), end: end.getTime() };
+  }, [xDomain, timeRange]);
 
   // Axis config
   const xAxisConfig = useMemo(() => {
@@ -1018,6 +1037,13 @@ export function ChartPanel({
               onToggleVisibility={() => setAnnotationsHidden((v) => !v)}
               canToggleVisibility={annotationsEnabled}
             />
+            {!isSharedView && sourceId && labelMetrics.length > 0 && (
+              <LabelProposals
+                metrics={labelMetrics}
+                timeWindow={labelWindow}
+                sourceId={sourceId}
+              />
+            )}
             {connectionMeta?.truncated && (
               <span
                 title={`This panel hit the ${connectionMeta.rowCount.toLocaleString()}-row limit, so only part of the selected range is shown. Aggregate in your query (e.g. GROUP BY a time bucket) or narrow the time range to see all the data.`}
