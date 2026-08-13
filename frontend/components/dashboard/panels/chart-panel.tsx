@@ -39,7 +39,7 @@ import {
 import { AnnotationPopover } from "@/components/annotations/annotation-popover";
 import { AnnotationsPanel } from "@/components/annotations/annotations-panel";
 import { ChartAnnotationOverlay } from "@/components/dashboard/panels/chart-annotation-overlay";
-import { LabelProposals } from "@/components/dashboard/label-proposals";
+import { ExplainButton } from "@/components/dashboard/label-proposals";
 import { AlertBands } from "@/components/ui/charts/alert-bands";
 import { useAlerts } from "@/hooks/use-alerts";
 import { useRouter } from "next/navigation";
@@ -1037,12 +1037,8 @@ export function ChartPanel({
               onToggleVisibility={() => setAnnotationsHidden((v) => !v)}
               canToggleVisibility={annotationsEnabled}
             />
-            {!isSharedView && sourceId && labelMetrics.length > 0 && (
-              <LabelProposals
-                metrics={labelMetrics}
-                timeWindow={labelWindow}
-                sourceId={sourceId}
-              />
+            {!isSharedView && labelMetrics.length > 0 && (
+              <ExplainButton metrics={labelMetrics} timeWindow={labelWindow} />
             )}
             {connectionMeta?.truncated && (
               <span

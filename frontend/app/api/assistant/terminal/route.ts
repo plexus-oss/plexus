@@ -15,8 +15,15 @@ import {
   buildDeleteSourceProposal,
   buildConnectionProposal,
   buildUpdateConnectionProposal,
+  buildAnnotationProposal,
+  buildRememberProposal,
   type ToolCtx,
+  type TerminalProposal,
 } from "@/lib/ai/terminal/tools";
+import {
+  aiLabelRunQueries,
+  type LabelRunObservation,
+} from "@/lib/db/queries/ai-label-runs";
 import { getSourceMetrics } from "@/lib/db/clickhouse";
 import { eq } from "drizzle-orm";
 import { db } from "@/lib/db/client";
@@ -33,6 +40,69 @@ const MAX_TURNS = 8; // tool-use rounds before we stop
 interface InMsg {
   role: "user" | "assistant";
   content: string;
+}
+
+/**
+ * Persist a Terminal-originated annotation/remember proposal as an
+ * ai_label_runs row — the same observability record the chart labeling flow
+ * writes, read by /intelligence — and attach the run linkage to the proposal
+ * so the card's Apply/Dismiss stamps the human verdict onto it (via the
+ * existing /api/assistant/label/verdict route). Best-effort: if the insert
+ * fails the card still renders, just without verdict tracking.
+ */
+async function attachLabelRun(
+  proposal: TerminalProposal,
+  ctx: ToolCtx,
+  metrics: string[],
+): Promise<void> {
+  const isAnnotation = proposal.kind === "annotation";
+  const body = proposal.body as Record<string, unknown>;
+  const now = new Date().toISOString();
+  const startIso = isAnnotation ? String(body.timestamp_start) : now;
+  const endIso =
+    isAnnotation && body.timestamp_end ? String(body.timestamp_end) : startIso;
+  const startMs = isAnnotation ? new Date(startIso).getTime() : null;
+  const endMs =
+    isAnnotation && body.timestamp_end ? new Date(endIso).getTime() : null;
+  const label = isAnnotation ? String(body.label) : String(body.content);
+  const observation: LabelRunObservation = {
+    label,
+    note: isAnnotation ? ((body.notes as string | null) ?? null) : null,
+    start_ms: startMs,
+    end_ms: endMs,
+    confidence: null,
+    kind: isAnnotation ? "label" : "remember",
+    verdict: null,
+    verdict_at: null,
+  };
+  try {
+    const run = await aiLabelRunQueries.insert({
+      org_id: ctx.orgId,
+      user_id: ctx.userId ?? null,
+      provider: "anthropic",
+      model: MODEL,
+      latency_ms: 0,
+      input_tokens: null,
+      output_tokens: null,
+      // Qualified slug-prefixed keys, same shape as label runs —
+      // /intelligence scopes run visibility and names the source off these.
+      metrics,
+      window_start: startIso,
+      window_end: endIso,
+      context_items: [],
+      observations: [observation],
+    });
+    proposal.verdict = {
+      runId: run.id,
+      index: 0,
+      kind: observation.kind,
+      label: label.slice(0, 200),
+      startMs,
+      endMs,
+    };
+  } catch {
+    /* best-effort — see above */
+  }
 }
 
 /**
@@ -299,6 +369,52 @@ export const POST = withAuth(async (request, { orgId, userId, orgRole }) => {
               continue;
             }
 
+            // propose_annotation / propose_remember — label-flow proposals
+            // originating in the Terminal. Persist the ai_label_runs row FIRST
+            // so the streamed card carries run linkage for verdict stamping.
+            if (
+              block.name === "propose_annotation" ||
+              block.name === "propose_remember"
+            ) {
+              const isAnnotation = block.name === "propose_annotation";
+              const proposal = isAnnotation
+                ? buildAnnotationProposal(block.input)
+                : buildRememberProposal(block.input);
+              if (proposal) {
+                // Annotations key the run by their real slug:metric; memories
+                // have no metric, so key by the source's context — that keeps
+                // /intelligence access-scoping (slug-prefixed) intact.
+                const src = String(
+                  (block.input as { source?: unknown })?.source ?? "",
+                ).trim();
+                const runMetrics = isAnnotation
+                  ? (proposal.previewMetrics ?? [])
+                  : [`${src}:context`];
+                await attachLabelRun(proposal, ctx, runMetrics);
+                send({ type: "proposal", proposal });
+                send({ type: "tool", name: block.name, status: "done" });
+                results.push({
+                  type: "tool_result",
+                  tool_use_id: block.id,
+                  content: isAnnotation
+                    ? "Proposed the annotation and showed it to the user to review and Apply. Briefly say what the label marks and which data supports it."
+                    : "Proposed the memory and showed it to the user to review and Apply. Briefly say why it's worth remembering.",
+                });
+              } else {
+                send({ type: "tool", name: block.name, status: "done" });
+                results.push({
+                  type: "tool_result",
+                  tool_use_id: block.id,
+                  content: JSON.stringify({
+                    error: isAnnotation
+                      ? "need source, metric, start_ms (epoch milliseconds), and label"
+                      : "need source and content",
+                  }),
+                });
+              }
+              continue;
+            }
+
             // The remaining propose_* tools all follow the same shape: build a
             // proposal from the model's input, stream it for the user to Apply,
             // and tell the model it PROPOSED (not performed) the action.
@@ -390,4 +506,14 @@ export const POST = withAuth(async (request, { orgId, userId, orgRole }) => {
       "cache-control": "no-store",
     },
   });
+});
+
+/**
+ * GET /api/assistant/terminal — availability check for the UI ({available}),
+ * mirroring GET /api/assistant/label: env-only, no network probe. The
+ * "Explain" button on chart panels renders off this (the POST 503s without
+ * ANTHROPIC_API_KEY).
+ */
+export const GET = withAuth(async () => {
+  return NextResponse.json({ available: !!process.env.ANTHROPIC_API_KEY });
 });

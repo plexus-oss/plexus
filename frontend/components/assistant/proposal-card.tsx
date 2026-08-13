@@ -21,8 +21,13 @@ import {
   Pencil,
   Trash2,
   Database,
+  Tag,
+  BookmarkPlus,
+  X,
 } from "lucide-react";
 import { connectionMeta } from "@/lib/connections/connection-meta";
+import { useUserSettings } from "@/context/user-settings-context";
+import { formatDateTimeInZone } from "@/lib/timezone";
 import { ACCENT } from "@/components/assistant/terminal-theme";
 import { InlinePanel } from "@/components/assistant/inline-panel";
 import { MiniDashboard } from "@/components/assistant/mini-dashboard";
@@ -33,7 +38,12 @@ import type { Severity } from "@/lib/triage/types";
 
 // Revalidate the relevant list so the new object shows immediately, even though
 // the Terminal created it out-of-band (mirrors the product's onCreated→mutate).
-const LIST_KEY: Record<Proposal["kind"], string> = {
+// Annotation/memory lists key by parameterized URLs, so those refresh via a
+// key-prefix filter in `apply` instead.
+const LIST_KEY: Record<
+  Exclude<Proposal["kind"], "annotation" | "memory">,
+  string
+> = {
   monitor: "/api/monitors",
   dashboard: "/api/dashboards",
   integration: "/api/integrations/email",
@@ -42,7 +52,14 @@ const LIST_KEY: Record<Proposal["kind"], string> = {
 };
 
 export interface Proposal {
-  kind: "monitor" | "dashboard" | "integration" | "source" | "connection";
+  kind:
+    | "monitor"
+    | "dashboard"
+    | "integration"
+    | "source"
+    | "connection"
+    | "annotation"
+    | "memory";
   /** What Apply does — drives the HTTP method + success copy. Default "create". */
   action?: "create" | "update" | "delete";
   title: string;
@@ -55,9 +72,20 @@ export interface Proposal {
   /** For a dashboard — the exact Panel[] Apply will create (mini-dashboard preview). */
   previewPanels?: Panel[];
   appliedHref?: string;
+  /** For annotation/memory — the ai_label_runs row this proposal was persisted
+   *  as; Apply/Dismiss stamps the human verdict onto it via the existing
+   *  /api/assistant/label/verdict route (read by /intelligence). */
+  verdict?: {
+    runId: string;
+    index: number;
+    kind: "label" | "remember";
+    label: string;
+    startMs?: number | null;
+    endMs?: number | null;
+  };
 }
 
-type State = "idle" | "applying" | "done" | "error";
+type State = "idle" | "applying" | "done" | "error" | "dismissed";
 
 /** Minimal Panel so InlinePanel can render a live chart for `source:metric`. */
 function previewPanel(key: string): Panel {
@@ -91,9 +119,64 @@ function ProposalPreview({
   setConnString: (v: string) => void;
   disabled: boolean;
 }) {
+  const { settings } = useUserSettings();
   const body = (proposal.body ?? {}) as Record<string, unknown>;
   const previews = (proposal.previewMetrics ?? []).slice(0, 4);
   const action = proposal.action ?? "create";
+
+  // ── Annotation: the label + note + window it will draw on the chart ──────
+  if (proposal.kind === "annotation") {
+    const fmt = (iso: string) =>
+      formatDateTimeInZone(
+        new Date(iso),
+        settings.timezone,
+        settings.use12HourFormat,
+      );
+    const start = String(body.timestamp_start ?? "");
+    const end = body.timestamp_end ? String(body.timestamp_end) : null;
+    const metric = (proposal.previewMetrics ?? [])[0];
+    return (
+      <div className="flex items-start gap-3 px-3.5 py-3">
+        <div className="flex h-9 w-9 items-center justify-center rounded-md bg-primary/10">
+          <Tag className="h-4 w-4 text-primary" />
+        </div>
+        <div className="min-w-0 flex-1 space-y-0.5">
+          <div className="truncate text-sm font-medium text-foreground">
+            {String(body.label ?? "")}
+          </div>
+          {Boolean(body.notes) && (
+            <div className="text-xs text-muted-foreground">
+              {String(body.notes)}
+            </div>
+          )}
+          <div className="truncate font-mono text-[11px] text-muted-foreground">
+            {metric ? `${metric} · ` : ""}
+            {fmt(start)}
+            {end ? ` – ${fmt(end)}` : ""}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // ── Memory: the durable fact Apply saves to the source's context ─────────
+  if (proposal.kind === "memory") {
+    return (
+      <div className="flex items-start gap-3 px-3.5 py-3">
+        <div className="flex h-9 w-9 items-center justify-center rounded-md bg-primary/10">
+          <BookmarkPlus className="h-4 w-4 text-primary" />
+        </div>
+        <div className="min-w-0 flex-1 space-y-0.5">
+          <p className="text-sm leading-snug text-foreground">
+            {String(body.content ?? "")}
+          </p>
+          <p className="text-[11px] text-muted-foreground">
+            Saved to the source&apos;s context as &quot;Model memory&quot;.
+          </p>
+        </div>
+      </div>
+    );
+  }
 
   // ── Delete: a destructive confirmation row (any source/connection) ───────
   if (action === "delete") {
@@ -272,6 +355,8 @@ const NOUN: Record<Proposal["kind"], string> = {
   source: "source",
   connection: "connection",
   monitor: "alert",
+  annotation: "annotation",
+  memory: "memory",
 };
 const OPEN_LABEL: Record<Proposal["kind"], string> = {
   dashboard: "Open dashboard",
@@ -279,6 +364,8 @@ const OPEN_LABEL: Record<Proposal["kind"], string> = {
   source: "Open device",
   connection: "Open connections",
   monitor: "View alerts",
+  annotation: "View annotations",
+  memory: "View context",
 };
 
 export function ProposalCard({ proposal }: { proposal: Proposal }) {
@@ -294,6 +381,32 @@ export function ProposalCard({ proposal }: { proposal: Proposal }) {
   const isConnCreate = proposal.kind === "connection" && action === "create";
 
   const method = action === "delete" ? "DELETE" : action === "update" ? "PATCH" : "POST";
+
+  // Annotation/memory proposals carry their ai_label_runs linkage — stamp the
+  // human verdict exactly the way the chart labeling flow does (best-effort).
+  const sendVerdict = (applied: boolean) => {
+    const v = proposal.verdict;
+    if (!v) return;
+    void fetch("/api/assistant/label/verdict", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        kind: v.kind,
+        label: v.label,
+        ...(v.kind === "label"
+          ? { start_ms: v.startMs ?? null, end_ms: v.endMs ?? null }
+          : {}),
+        applied,
+        run_id: v.runId,
+        observation_index: v.index,
+      }),
+    }).catch(() => {});
+  };
+
+  const dismiss = () => {
+    sendVerdict(false);
+    setState("dismissed");
+  };
 
   const apply = async () => {
     setState("applying");
@@ -326,7 +439,21 @@ export function ProposalCard({ proposal }: { proposal: Proposal }) {
         /* keep fallback href */
       }
       setState("done");
-      mutate(LIST_KEY[proposal.kind]); // refresh the list so it shows up now
+      sendVerdict(true);
+      // Refresh the relevant list so it shows up now. Annotation and context
+      // lists key by parameterized URLs, so match on the key prefix — this is
+      // what makes the chart overlay update live after Apply.
+      if (proposal.kind === "annotation") {
+        void mutate(
+          (key) => typeof key === "string" && key.startsWith("/api/annotations"),
+        );
+      } else if (proposal.kind === "memory") {
+        void mutate(
+          (key) => typeof key === "string" && key.startsWith(proposal.endpoint),
+        );
+      } else {
+        void mutate(LIST_KEY[proposal.kind]);
+      }
     } catch {
       setState("error");
     }
@@ -352,11 +479,19 @@ export function ProposalCard({ proposal }: { proposal: Proposal }) {
           className="h-1.5 w-1.5 rounded-full"
           style={{
             background:
-              state === "done" ? undefined : isDelete ? "#ef4444" : ACCENT,
+              state === "done" || state === "dismissed"
+                ? undefined
+                : isDelete
+                  ? "#ef4444"
+                  : ACCENT,
           }}
         />
         <span className="font-mono text-[11px] uppercase tracking-wide text-muted-foreground">
-          {state === "done" ? `${doneVerb} ${noun}` : idleHeader}
+          {state === "done"
+            ? `${doneVerb} ${noun}`
+            : state === "dismissed"
+              ? `dismissed ${noun}`
+              : idleHeader}
         </span>
       </div>
 
@@ -390,6 +525,10 @@ export function ProposalCard({ proposal }: { proposal: Proposal }) {
               </span>
             )}
           </span>
+        ) : state === "dismissed" ? (
+          <span className="flex items-center gap-1.5 text-[13px] text-muted-foreground">
+            <X className="h-3.5 w-3.5" /> Dismissed
+          </span>
         ) : state === "error" ? (
           <>
             <span className="flex items-center gap-1.5 text-[13px] text-red-500">
@@ -403,23 +542,34 @@ export function ProposalCard({ proposal }: { proposal: Proposal }) {
             </button>
           </>
         ) : (
-          <button
-            onClick={apply}
-            disabled={applyDisabled}
-            className={cn(
-              "rounded-md px-3 py-1 text-[13px] font-medium text-white transition-opacity hover:opacity-90 disabled:opacity-60",
-              isDelete && "bg-red-500",
+          <>
+            <button
+              onClick={apply}
+              disabled={applyDisabled}
+              className={cn(
+                "rounded-md px-3 py-1 text-[13px] font-medium text-white transition-opacity hover:opacity-90 disabled:opacity-60",
+                isDelete && "bg-red-500",
+              )}
+              style={isDelete ? undefined : { background: ACCENT }}
+            >
+              {state === "applying"
+                ? isDelete
+                  ? "Deleting…"
+                  : "Applying…"
+                : isDelete
+                  ? "Delete"
+                  : "Apply"}
+            </button>
+            {proposal.verdict && (
+              <button
+                onClick={dismiss}
+                disabled={state === "applying"}
+                className="text-[13px] text-muted-foreground transition-colors hover:text-foreground disabled:opacity-60"
+              >
+                Dismiss
+              </button>
             )}
-            style={isDelete ? undefined : { background: ACCENT }}
-          >
-            {state === "applying"
-              ? isDelete
-                ? "Deleting…"
-                : "Applying…"
-              : isDelete
-                ? "Delete"
-                : "Apply"}
-          </button>
+          </>
         )}
       </div>
     </div>

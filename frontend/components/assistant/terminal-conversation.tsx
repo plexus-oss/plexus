@@ -70,6 +70,7 @@ const TOOL_LABELS: Record<string, string> = {
   list_sources: "scanning sources",
   get_source_metrics: "reading metrics",
   query_metric: "querying data",
+  get_source_context: "reading context",
   get_fleet_status: "checking fleet",
   list_alerts: "reading alerts",
   show_metric: "rendering chart",
@@ -82,6 +83,8 @@ const TOOL_LABELS: Record<string, string> = {
   propose_delete_source: "drafting deletion",
   propose_create_connection: "drafting connection",
   propose_update_connection: "drafting update",
+  propose_annotation: "drafting annotation",
+  propose_remember: "drafting memory",
 };
 
 const PROMPTS = [
@@ -93,8 +96,12 @@ const PROMPTS = [
 
 export function TerminalConversation({
   variant = "panel",
+  initialMessage,
 }: {
   variant?: "panel" | "page";
+  /** When set, the session opens by sending this message immediately — the
+   *  programmatic open path (e.g. a chart's "Explain" button). */
+  initialMessage?: string;
 }) {
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
@@ -226,8 +233,8 @@ export function TerminalConversation({
       prev.map((m, i) => (i === prev.length - 1 ? fn(m) : m)),
     );
 
-  const send = useCallback(async () => {
-    const q = input.trim();
+  const send = useCallback(async (text?: string) => {
+    const q = (text ?? input).trim();
     if (!q || busy) return;
     const history: Msg[] = [
       ...messages,
@@ -323,6 +330,17 @@ export function TerminalConversation({
       setBusy(false);
     }
   }, [input, busy, messages]);
+
+  // Seeded open: send the initial message once, as if the user typed it. The
+  // host remounts this component per open (keyed on the seed), so the guard
+  // only has to survive re-renders within one session.
+  const seededRef = useRef(false);
+  useEffect(() => {
+    if (initialMessage && !seededRef.current) {
+      seededRef.current = true;
+      void send(initialMessage);
+    }
+  }, [initialMessage, send]);
 
   const row = variant === "page" ? "mx-auto w-full  px-6" : "px-4";
 

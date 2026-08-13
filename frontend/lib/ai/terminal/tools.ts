@@ -8,8 +8,10 @@
  */
 
 import type Anthropic from "@anthropic-ai/sdk";
-import { sourceQueries } from "@/lib/db/queries/sources";
+import { sourceQueries, sourceContextQueries } from "@/lib/db/queries/sources";
 import { alertQueries } from "@/lib/db/queries/alerts";
+import { findSourceByRef } from "@/lib/api/find-source";
+import { summarizeSeries } from "@/lib/ai/label/prompt";
 import {
   getSourceMetrics,
   queryTelemetryAdaptive,
@@ -243,7 +245,7 @@ export const TERMINAL_TOOLS: Anthropic.Tool[] = [
   {
     name: "query_metric",
     description:
-      "Query the REAL values of one metric over a time range and get a compact statistical summary (latest, min, max, average, count, and percentiles for longer ranges) plus a few recent points. Use this to ANSWER questions about data — 'what's the battery on drone-001?', 'how high did the temperature get today?', 'is CPU usage normal?'. Verify the source + metric exist first with get_source_metrics. For a visual chart instead, use show_metric.",
+      "Query the REAL values of one metric over a time range and get a compact statistical summary (latest, min, max, average, count, percentiles for longer ranges, and downsampled shape buckets) plus a few recent points. Use this to ANSWER questions about data — 'what's the battery on drone-001?', 'how high did the temperature get today?', 'is CPU usage normal?' — and to INVESTIGATE a specific window: pass absolute start/end (ISO 8601 or epoch ms) to query exactly that window, e.g. the window the user is looking at. Verify the source + metric exist first with get_source_metrics. For a visual chart instead, use show_metric.",
     input_schema: {
       type: "object",
       properties: {
@@ -251,10 +253,69 @@ export const TERMINAL_TOOLS: Anthropic.Tool[] = [
         metric: { type: "string", description: "the exact metric name, e.g. battery.voltage" },
         range: {
           type: "string",
-          description: "time window: 5m, 15m, 1h, 6h, 24h, 7d, 30d (default 1h)",
+          description: "relative time window: 5m, 15m, 1h, 6h, 24h, 7d, 30d (default 1h; ignored when start/end are given)",
+        },
+        start: {
+          type: "string",
+          description: "absolute window start — ISO 8601 timestamp or epoch milliseconds",
+        },
+        end: {
+          type: "string",
+          description: "absolute window end — ISO 8601 timestamp or epoch milliseconds",
         },
       },
       required: ["source", "metric"],
+    },
+  },
+  {
+    name: "get_source_context",
+    description:
+      "Read the user-maintained context items for a source: notes (with their full text), files, links, and saved model memories. Read this before explaining or annotating a source's data — the context often says what the hardware is and what 'normal' looks like.",
+    input_schema: {
+      type: "object",
+      properties: {
+        source: { type: "string", description: "the source slug, e.g. drone-001" },
+      },
+      required: ["source"],
+    },
+  },
+  {
+    name: "propose_annotation",
+    description:
+      "Propose labeling a time window on a metric — an annotation drawn on the chart — for the user to review and Apply. Use when an investigation shows something notable in a window (a spike, drop, gap, oscillation). Times are epoch milliseconds UTC; omit end_ms for a single instant. Base the window and the note on real data you actually queried. This does NOT create the annotation — the user Applies it.",
+    input_schema: {
+      type: "object",
+      properties: {
+        source: { type: "string", description: "the source slug, e.g. drone-001" },
+        metric: { type: "string", description: "the exact metric name, e.g. battery.voltage" },
+        start_ms: { type: "number", description: "window start, epoch milliseconds UTC" },
+        end_ms: {
+          type: "number",
+          description: "window end, epoch milliseconds UTC (omit for a single instant)",
+        },
+        label: { type: "string", description: "short label, e.g. 'Voltage sag'" },
+        note: {
+          type: "string",
+          description: "one-line note citing the series and values that support it",
+        },
+      },
+      required: ["source", "metric", "start_ms", "label", "note"],
+    },
+  },
+  {
+    name: "propose_remember",
+    description:
+      "Propose saving a durable fact about a source to its context (a 'Model memory' note) for the user to review and Apply. Only for facts strongly supported by data you actually queried (e.g. a recurring baseline), never speculation. Applied memories are retrieved into future analysis of the source. This does NOT save anything — the user Applies it.",
+    input_schema: {
+      type: "object",
+      properties: {
+        source: { type: "string", description: "the source slug the fact is about" },
+        content: {
+          type: "string",
+          description: "the durable fact to remember — one or two sentences",
+        },
+      },
+      required: ["source", "content"],
     },
   },
   {
@@ -284,7 +345,14 @@ export const TERMINAL_TOOLS: Anthropic.Tool[] = [
 
 /** A proposal the Terminal shows the user to review + Apply (preview→confirm). */
 export interface TerminalProposal {
-  kind: "monitor" | "dashboard" | "integration" | "source" | "connection";
+  kind:
+    | "monitor"
+    | "dashboard"
+    | "integration"
+    | "source"
+    | "connection"
+    | "annotation"
+    | "memory";
   /** What Apply does. Drives the HTTP method (create→POST, update→PATCH,
    *  delete→DELETE) and the success copy. Defaults to "create". */
   action?: "create" | "update" | "delete";
@@ -303,6 +371,19 @@ export interface TerminalProposal {
   previewPanels?: Panel[];
   /** Fallback link after Apply (a deep link is derived from the response when available). */
   appliedHref?: string;
+  /** For annotation/memory proposals — ties Apply/Dismiss to the ai_label_runs
+   *  row created when the tool was called, so /intelligence shows the human
+   *  verdict next to what the model proposed (same flow as chart labeling). */
+  verdict?: {
+    runId: string;
+    /** Index into the run's observations array. */
+    index: number;
+    kind: "label" | "remember";
+    /** The proposal text the verdict route logs (label or memory content). */
+    label: string;
+    startMs?: number | null;
+    endMs?: number | null;
+  };
 }
 
 /** Friendly device_type → the value the API/device modal stores. Shared by the
@@ -492,6 +573,73 @@ export function buildUpdateConnectionProposal(input: unknown): TerminalProposal 
     endpoint: `/api/sources/${slug}`,
     appliedHref: "/connections",
     body,
+  };
+}
+
+/** Epoch-ms parser tolerant of the forms a model produces: a number, a numeric
+ *  string, or an ISO 8601 timestamp. Null when unparseable. */
+export function parseEpochMs(v: unknown): number | null {
+  if (typeof v === "number" && Number.isFinite(v)) return Math.floor(v);
+  if (typeof v === "string" && v.trim()) {
+    const s = v.trim();
+    if (/^\d{10,}$/.test(s)) return Number(s);
+    const t = new Date(s).getTime();
+    if (Number.isFinite(t)) return t;
+  }
+  return null;
+}
+
+/**
+ * Build an annotation proposal. Apply POSTs /api/annotations with EXACTLY the
+ * body the chart labeling flow sends (label-proposals → useAnnotations
+ * createAnnotation), so the chart overlay updates the same way. The verdict
+ * linkage (ai_label_runs row) is attached by the route after it persists the
+ * run.
+ */
+export function buildAnnotationProposal(input: unknown): TerminalProposal | null {
+  const a = (input ?? {}) as Record<string, unknown>;
+  const source = String(a.source ?? "").trim();
+  const metric = String(a.metric ?? "").trim();
+  const label = String(a.label ?? "").trim().slice(0, 200);
+  const startMs = parseEpochMs(a.start_ms);
+  if (!source || !metric || !label || startMs === null) return null;
+  const endParsed = parseEpochMs(a.end_ms);
+  const endMs = endParsed !== null && endParsed > startMs ? endParsed : null;
+  const note = typeof a.note === "string" && a.note.trim() ? a.note.trim() : null;
+  return {
+    kind: "annotation",
+    title: `Annotation · ${label}`,
+    summary: note ?? `Label this window on ${source}:${metric}.`,
+    endpoint: "/api/annotations",
+    previewMetrics: [`${source}:${metric}`],
+    // Same shape label-proposals passes to createAnnotation.
+    body: {
+      source_id: source,
+      timestamp_start: new Date(startMs).toISOString(),
+      timestamp_end: endMs !== null ? new Date(endMs).toISOString() : null,
+      label,
+      color: "purple",
+      notes: note,
+    },
+  };
+}
+
+/**
+ * Build a "remember" (source memory) proposal. Apply POSTs the existing
+ * source-context API as a note named "Model memory" — the exact request shape
+ * label-proposals sends — so applied memories join the same retrieval pool.
+ */
+export function buildRememberProposal(input: unknown): TerminalProposal | null {
+  const a = (input ?? {}) as Record<string, unknown>;
+  const source = String(a.source ?? "").trim();
+  const content = String(a.content ?? "").trim();
+  if (!source || !content) return null;
+  return {
+    kind: "memory",
+    title: `Memory · ${source}`,
+    summary: content,
+    endpoint: `/api/sources/${source}/context`,
+    body: { context_type: "note", name: "Model memory", content },
   };
 }
 
@@ -711,13 +859,42 @@ export async function runTool(
       const metrics = await getSourceMetrics(ctx.orgId, slug);
       return { source: slug, metrics };
     }
+    case "get_source_context": {
+      const slug = String(args.source ?? "").trim();
+      if (!slug) return { error: "source is required" };
+      const src = await findSourceByRef(ctx.orgId, slug, false);
+      if (!src) return { error: `unknown source: ${slug}` };
+      const rows = await sourceContextQueries.findBySource(ctx.orgId, src.id);
+      // Notes carry their text body; file/link items contribute name +
+      // description only — same rule the labeling prompt applies.
+      return {
+        source: slug,
+        items: rows.slice(0, 50).map((c) => ({
+          type: c.context_type,
+          name: c.name,
+          description: c.description,
+          content:
+            c.context_type === "note" ? (c.content ?? "").slice(0, 4000) : null,
+          created_at: c.created_at,
+        })),
+      };
+    }
     case "query_metric": {
       const source = String(args.source ?? "").trim();
       const metric = String(args.metric ?? "").trim();
       if (!source || !metric) return { error: "source and metric are required" };
-      const range =
-        typeof args.range === "string" && args.range.trim() ? args.range.trim() : "1h";
-      const { startTime, endTime } = parseTimeRangeParam(range, "1h");
+      // Absolute window (ISO or epoch ms) wins over the relative range.
+      const absStart = parseEpochMs(args.start);
+      const absEnd = parseEpochMs(args.end);
+      const absolute = absStart !== null && absEnd !== null && absEnd > absStart;
+      const range = absolute
+        ? `${new Date(absStart).toISOString()} – ${new Date(absEnd).toISOString()}`
+        : typeof args.range === "string" && args.range.trim()
+          ? args.range.trim()
+          : "1h";
+      const { startTime, endTime } = absolute
+        ? { startTime: new Date(absStart), endTime: new Date(absEnd) }
+        : parseTimeRangeParam(range, "1h");
       const { points, resolution } = await queryTelemetryAdaptive(
         ctx.orgId,
         source,
@@ -752,6 +929,15 @@ export async function runTool(
         const p = await getMetricPercentiles(ctx.orgId, source, metric, days);
         if (p) summary.percentiles = { p5: round(p.p5), p50: round(p.p50), p95: round(p.p95) };
       }
+      // Downsampled shape (≤40 buckets) — the same summary the labeling flow
+      // reads — so the model can see peaks/drops/gaps, not just endpoints.
+      const shape = summarizeSeries(
+        `${source}:${metric}`,
+        points,
+        startTime.getTime(),
+        endTime.getTime(),
+      );
+      if (shape) summary.buckets = shape.buckets;
       summary.recentPoints = points.slice(-10).map((p) => ({ t: p.timestamp, v: p.value }));
       return summary;
     }
