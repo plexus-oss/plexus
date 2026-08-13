@@ -535,6 +535,17 @@ export const alerts = pgTable(
         table.source_id.asc().nullsLast(),
       )
       .where(sql`((is_alert_active = true) AND (rule_id IS NOT NULL))`),
+    // Poll-path twin of the index above: at most one active alert per
+    // (limit, source). Durable dedup for connection threshold monitors,
+    // which key by limit_id and carry no rule_id.
+    uniqueIndex("idx_alerts_one_open_per_limit_source")
+      .using(
+        "btree",
+        table.org_id.asc().nullsLast(),
+        table.limit_id.asc().nullsLast(),
+        table.source_id.asc().nullsLast(),
+      )
+      .where(sql`((is_alert_active = true) AND (limit_id IS NOT NULL))`),
     foreignKey({
       columns: [table.limit_id],
       foreignColumns: [sourceLimits.id],

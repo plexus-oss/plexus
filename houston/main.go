@@ -334,6 +334,13 @@ func main() {
 
 	go rc.RunProbe(ctx)
 
+	// Reconcile DB-active alerts against in-memory instances (see
+	// reconcile.go) — repairs alerts stranded by restarts and dropped
+	// close batches.
+	if cfg.Internal.APIURL != "" {
+		go runReconcileLoop(ctx, cfg.Internal.APIURL, cfg.Internal.Secret, states)
+	}
+
 	// Dogfood: stream our own health into Plexus (see selfmonitor.go).
 	if cfg.SelfMonitor.APIKey != "" {
 		go runSelfMonitor(ctx, cfg.SelfMonitor, rc, consumerMgr, notifier)

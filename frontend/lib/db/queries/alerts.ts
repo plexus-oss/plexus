@@ -178,6 +178,11 @@ export const alertQueries = {
       resolved_at: new Date().toISOString(),
       resolved_by: userId,
       resolution_notes: resolutionNotes ?? null,
+      // Resolving also closes the condition — same coupling as the PATCH
+      // /api/alerts/[id] "resolve" action (see that route for why). COALESCE
+      // keeps an earlier machine-set closed_at (the true clear time).
+      is_alert_active: false,
+      closed_at: sql`COALESCE(closed_at, now())` as unknown as string,
     }, tx);
   },
 
@@ -188,6 +193,32 @@ export const alertQueries = {
       resolved_by: null,
       resolution_notes: null,
     }, tx);
+  },
+
+  /**
+   * The active alert for a (limit, source) pair, if any. Poll-path mirror of
+   * adminAlertQueries.findOpenByRuleAndSource — used by the limit recovery
+   * path (lib/alerts/fire-alert.ts resolveLimitAlert) and backed by the
+   * unique partial index idx_alerts_one_open_per_limit_source.
+   */
+  findActiveByLimitAndSource: async (
+    orgId: string,
+    limitId: string,
+    sourceId: string,
+  ): Promise<Alert | null> => {
+    const rows = await db
+      .select()
+      .from(alerts)
+      .where(
+        and(
+          eq(alerts.org_id, orgId),
+          eq(alerts.limit_id, limitId),
+          eq(alerts.source_id, sourceId),
+          eq(alerts.is_alert_active, true),
+        ),
+      )
+      .limit(1);
+    return oneOrNull(rows) as Alert | null;
   },
 
 

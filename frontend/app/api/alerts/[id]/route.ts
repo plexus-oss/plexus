@@ -152,6 +152,13 @@ export const PATCH = withDualAuth(async (request, { orgId, userId, orgRole, isAp
         status: "resolved",
         resolved_at: new Date().toISOString(),
         resolved_by: userId || "system",
+        // Resolving also closes the condition: a resolved-but-active row
+        // paints an ever-growing chart band and, via the unique active-alert
+        // index, blocks the next real open for the same (rule, source).
+        is_alert_active: false,
+        ...(existingAlert.closed_at
+          ? {}
+          : { closed_at: new Date().toISOString() }),
       };
       if (resolution_notes) updateFields.resolution_notes = resolution_notes;
       eventType = "resolved";
@@ -197,7 +204,16 @@ export const PATCH = withDualAuth(async (request, { orgId, userId, orgRole, isAp
     default: {
       const { status, recommended_actions, closed_at, triggered_at } = body;
       const data: Record<string, unknown> = {};
-      if (status) data.status = status as AlertStatus;
+      if (status) {
+        data.status = status as AlertStatus;
+        // Same machine-field coupling as the "resolve" action.
+        if (status === "resolved") {
+          data.resolved_at = new Date().toISOString();
+          data.is_alert_active = false;
+          if (!existingAlert.closed_at)
+            data.closed_at = new Date().toISOString();
+        }
+      }
       if (recommended_actions !== undefined) data.recommended_actions = recommended_actions;
       if (isApiKeyAuth) {
         if (closed_at !== undefined) data.closed_at = closed_at;

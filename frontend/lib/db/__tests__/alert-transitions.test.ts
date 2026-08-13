@@ -7,9 +7,10 @@
  * lib/webhooks/events runs for real, so these tests prove the route feeds
  * the same pipeline the manual-resolve and offline-recovery paths use.
  *
- * Key behavior under test: auto-clear ("closed" transition) emits
- * `alert.resolved` + notifications while leaving `status` untouched
- * (resolved/acknowledged remain user workflow actions).
+ * Key behavior under test: auto-clear ("closed" transition) closes the
+ * alert out fully — machine fields AND status='resolved' (resolved_by stays
+ * null = machine close; an earlier human resolve is never overwritten) —
+ * and emits `alert.resolved` + notifications.
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
@@ -17,7 +18,7 @@ import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { NextRequest } from "next/server";
 import { db } from "../client";
-import { alertRules, alerts, sources } from "../schema";
+import { alertEvents, alertRules, alerts, sources } from "../schema";
 
 vi.mock("@/lib/webhooks/dispatcher", () => ({
   scheduleWebhookDelivery: vi.fn().mockResolvedValue(undefined),
@@ -176,7 +177,7 @@ describe("POST /api/internal/alerts/transitions — open", () => {
 });
 
 describe("POST /api/internal/alerts/transitions — auto-clear (closed)", () => {
-  it("flips the condition, keeps status, and emits alert.resolved + notifications", async () => {
+  it("closes out fully (machine fields + status) and emits alert.resolved + notifications", async () => {
     const slug = uniqueSlug();
     const sourceUuid = await insertSource(slug);
     const ruleId = await insertRule(slug);
@@ -198,13 +199,14 @@ describe("POST /api/internal/alerts/transitions — auto-clear (closed)", () => 
     ]);
     expect(res.status).toBe(204);
 
-    // Condition cleared…
+    // Condition cleared AND the alert leaves the Open tab: a cleared
+    // condition is a resolved alert. resolved_by null = machine close.
     const row = await getAlert(alertId);
     expect(row.is_alert_active).toBe(false);
     expect(row.closed_at).not.toBeNull();
-    // …but status stays a user-workflow field.
-    expect(row.status).toBe("open");
-    expect(row.resolved_at).toBeNull();
+    expect(row.status).toBe("resolved");
+    expect(row.resolved_at).not.toBeNull();
+    expect(row.resolved_by).toBeNull();
 
     // Resolved event + notifications go through the shared pipeline.
     expect(scheduleWebhookDelivery).toHaveBeenCalledWith(
@@ -283,10 +285,86 @@ describe("POST /api/internal/alerts/transitions — auto-clear (closed)", () => 
       .from(alerts)
       .where(eq(alerts.rule_id, ruleId));
     expect(rows).toHaveLength(2);
-    // Old row: condition cleared, status untouched (user workflow).
-    // New row: firing again.
+    // Old row: closed out (resolved). New row: firing again.
     expect(rows.filter((r) => r.is_alert_active).length).toBe(1);
-    expect(rows.every((r) => r.status === "open")).toBe(true);
+    expect(rows.filter((r) => r.status === "resolved").length).toBe(1);
+    expect(rows.filter((r) => r.status === "open").length).toBe(1);
+  });
+
+  it("never overwrites a human resolve", async () => {
+    const slug = uniqueSlug();
+    const sourceUuid = await insertSource(slug);
+    const ruleId = await insertRule(slug);
+    const alertId = await insertActiveRuleAlert(sourceUuid, ruleId);
+    // Human resolved it while the condition was still firing (legacy rows
+    // from before manual-resolve cleared is_alert_active look like this too).
+    await db
+      .update(alerts)
+      .set({
+        status: "resolved",
+        resolved_at: new Date("2026-01-01T00:00:00Z").toISOString(),
+        resolved_by: "user-42",
+        resolution_notes: "power cycled the board",
+      })
+      .where(eq(alerts.id, alertId));
+
+    const res = await postTransitions([
+      {
+        rule_id: ruleId,
+        org_id: ORG,
+        source_id: slug,
+        metric: "cpu_temp",
+        state: "closed",
+        value: 70,
+        threshold: 90,
+        severity: "warning",
+        timestamp: Math.floor(Date.now() / 1000),
+      },
+    ]);
+    expect(res.status).toBe(204);
+
+    const row = await getAlert(alertId);
+    expect(row.is_alert_active).toBe(false);
+    expect(row.closed_at).not.toBeNull();
+    expect(row.resolved_by).toBe("user-42");
+    expect(row.resolution_notes).toBe("power cycled the board");
+    expect(new Date(row.resolved_at!).getTime()).toBe(
+      new Date("2026-01-01T00:00:00Z").getTime(),
+    );
+  });
+
+  it("records a reconciliation close honestly (reason=reconciled)", async () => {
+    const slug = uniqueSlug();
+    const sourceUuid = await insertSource(slug);
+    const ruleId = await insertRule(slug);
+    const alertId = await insertActiveRuleAlert(sourceUuid, ruleId);
+
+    const res = await postTransitions([
+      {
+        rule_id: ruleId,
+        org_id: ORG,
+        source_id: slug,
+        metric: "cpu_temp",
+        state: "closed",
+        value: 0,
+        severity: "warning",
+        timestamp: Math.floor(Date.now() / 1000),
+        reason: "reconciled",
+      },
+    ]);
+    expect(res.status).toBe(204);
+
+    const row = await getAlert(alertId);
+    expect(row.status).toBe("resolved");
+    expect(row.is_alert_active).toBe(false);
+
+    const events = await db
+      .select()
+      .from(alertEvents)
+      .where(eq(alertEvents.alert_id, alertId));
+    expect(events).toHaveLength(1);
+    expect(events[0].event_type).toBe("resolved");
+    expect(events[0].message).toContain("reconciliation");
   });
 
   it("is a no-op (no emission) when no matching open alert exists", async () => {

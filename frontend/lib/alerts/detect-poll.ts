@@ -75,7 +75,11 @@ import {
   POLL_ROW_LIMIT,
 } from "@/lib/alerts/event-poll-sql";
 import { resolvePollTarget } from "@/lib/alerts/resolve-poll-target";
-import { fireEventAlert, fireLimitAlert } from "@/lib/alerts/fire-alert";
+import {
+  fireEventAlert,
+  fireLimitAlert,
+  resolveLimitAlert,
+} from "@/lib/alerts/fire-alert";
 import { isSilenced } from "@/lib/alerts/silence";
 
 const SOURCE_CONCURRENCY = 3;
@@ -800,9 +804,12 @@ async function fireLimitBatch(
   nowIso: string,
 ): Promise<boolean> {
   // Evaluate every new value; fire once on the first (earliest) violation.
+  // The LAST evaluated value is the condition's current state: in bounds →
+  // any active alert for this (limit, source) resolves below.
   let violations = 0;
   let first: { value: number; bound: "min" | "max"; threshold: number } | null =
     null;
+  let last: { value: number; isViolation: boolean } | null = null;
   for (const row of rows) {
     const raw = row.plexus_value;
     const value = typeof raw === "number" ? raw : Number(raw);
@@ -813,6 +820,7 @@ async function fireLimitBatch(
       max: limit.max ?? undefined,
       severity: limit.severity,
     });
+    last = { value, isViolation: evaluation.isViolation };
     if (!evaluation.isViolation) continue;
 
     violations++;
@@ -823,7 +831,27 @@ async function fireLimitBatch(
         evaluation.violatedBound === "min" ? limit.min! : limit.max!,
     };
   }
-  if (!first) return false;
+
+  // Recovery: the newest value is back in bounds. Close whatever is active
+  // — including an alert fired from this same batch (a spike that recovered
+  // within one poll window opens and immediately resolves, which is the
+  // honest record of what happened). Fire first, then resolve, so the spike
+  // still lands in history and notifies.
+  if (!first) {
+    if (last && !last.isViolation) {
+      const resolved = await resolveLimitAlert({
+        orgId: limit.org_id,
+        sourceId: source.id,
+        source,
+        limitId: limit.id,
+        metric: limit.metric,
+        value: last.value,
+        clearedAt: nowIso,
+      });
+      return resolved !== null;
+    }
+    return false;
+  }
 
   const alert = await fireLimitAlert({
     orgId: limit.org_id,
@@ -846,6 +874,20 @@ async function fireLimitBatch(
       time_column: target.timeColumn,
     },
   });
+
+  // Violated earlier in the batch but the newest value recovered — close it
+  // out (see the recovery comment above).
+  if (last && !last.isViolation) {
+    await resolveLimitAlert({
+      orgId: limit.org_id,
+      sourceId: source.id,
+      source,
+      limitId: limit.id,
+      metric: limit.metric,
+      value: last.value,
+      clearedAt: nowIso,
+    });
+  }
   return alert !== null;
 }
 

@@ -14,7 +14,7 @@ bootstrap fallback), see `ARCHITECTURE.md`.
 
 ## Overview
 
-Four endpoints cross the boundary:
+Five endpoints cross the boundary:
 
 | Direction | Method & path | Served by | Purpose |
 |---|---|---|---|
@@ -22,6 +22,7 @@ Four endpoints cross the boundary:
 | Next.js → alert-service | `POST /internal/rules/{orgID}` | alert-service | Push an org's rules after a mutation |
 | alert-service → Next.js | `POST /api/internal/alerts/transitions` | Next.js | Deliver alert state changes (open/closed) |
 | Next.js → alert-service | `GET /stats` | alert-service | Live stats for an in-flight (open/recovering) alert |
+| alert-service → Next.js | `GET /api/internal/alerts/active` | Next.js | Active-alert list for the reconcile loop (§5) |
 
 (The alert service also serves `GET /livez` and `GET /readyz` health probes,
 with `GET /health` as a backward-compatible alias of `/readyz` — those are
@@ -338,6 +339,53 @@ There is no history here — this endpoint reads the in-memory state machine
 of one instance. Once the alert closes, the definitive stats arrive on the
 `closed` transition (`stats` field, §3).
 
+## 5. Active-alert reconcile — `GET /api/internal/alerts/active`
+
+Alert instances live only in alert-service memory, so a restart forgets
+every open alert: the frontend's `alerts` row stays `is_alert_active=true`
+forever (no instance → no `closed` transition), and the unique active-alert
+index then rejects the next `open` for that `(rule, source)` — silent
+permanent under-alerting. A `closed` batch dropped after retry exhaustion
+(§3) wedges a row the same way.
+
+The reconcile loop (`reconcile.go`, started from `main.go` when
+`PLEXUS_API_URL` is set) repairs both: every 5 minutes (first run 5 minutes
+after boot, so post-restart evaluations can re-adopt still-firing alerts
+via the duplicate-open skip) it fetches this endpoint and emits a synthetic
+`closed` transition with `reason="reconciled"` for every row that has no
+live (OPEN/CLOSING) instance. Conditions that are genuinely still firing
+re-open on their next evaluation.
+
+- **Server**: Next.js
+- **Client**: alert-service (`reconcile.go`, `FetchActiveAlertsFromAPI`)
+- **Request**:
+  ```http
+  GET /api/internal/alerts/active HTTP/1.1
+  x-internal-secret: {secret}
+  accept: application/json
+  ```
+- **Success response**: `200 OK`
+  ```json
+  {
+    "alerts": [
+      {
+        "org_id": "org_acme",
+        "rule_id": "uuid",
+        "source_id": "drone-17",
+        "metric": "battery",
+        "severity": "warning"
+      }
+    ]
+  }
+  ```
+  `source_id` is the slug, as everywhere in this contract. The list covers
+  only threshold/outlier/compound rules that are still enabled — offline
+  and poll-path (event/limit) alerts have their own close paths in the
+  frontend loops, and disabled/deleted rules are closed by the frontend's
+  orphan sweep.
+- **Failure**: any non-200 is logged and retried at the next tick — the
+  loop is a repair mechanism, not a hot path.
+
 ## Schemas
 
 Canonical definitions live in Go. These are the JSON shapes you'll see on the
@@ -474,6 +522,7 @@ Emitted by alert-service on every state change (open or closed).
 | `severity` | string | Copied from the rule unchanged. |
 | `distribution` | object | Snapshot of the Welford state at the moment of transition: see `DistSnapshot` below. |
 | `timestamp` | int | **Unix seconds.** For `open`, it's when the alert opened. For `closed`, when it closed. |
+| `reason` | enum \| omitted | Synthetic closes only: `"rule_deleted"` (rule vanished from a push while its alert was open) or `"reconciled"` (reconcile loop found an active row with no live instance, §5). Absent on organic transitions. |
 
 ### `DistSnapshot`
 
@@ -687,7 +736,7 @@ existing table's columns line up well:
 | `source_id` (slug) | `source_id` (UUID) | **Translate back.** Resolve slug → UUID via `sources` before insert. |
 | `metric` | `metric` | |
 | `state`=`open` | `is_alert_active`=true, `triggered_at`=timestamp | Insert new row. The condition axis is `is_alert_active`, not `status`. |
-| `state`=`closed` | `is_alert_active`=false, `closed_at`=timestamp (+ optional `alert_stats`) | Update the active row for the same `(rule_id, source_id)`. **`status`/`resolved_at`/`resolved_by` are NOT touched by the alert-service** — they are reserved for user workflow (acknowledge/resolve). |
+| `state`=`closed` | `is_alert_active`=false, `closed_at`=timestamp (+ optional `alert_stats`), and — unless a human already resolved — `status`='resolved', `resolved_at`=timestamp | Update the active row for the same `(rule_id, source_id)`. A cleared condition IS a resolved alert; `resolved_by` stays NULL to mark it a machine close, and an earlier human resolve (`status='resolved'`) is never overwritten. |
 | `value` | `value` | |
 | `threshold` | `threshold` | |
 | `z_score` | *(none)* | Optional: add a `z_score NUMERIC` column, or stash in `context_snapshot` JSON. |
@@ -696,10 +745,10 @@ existing table's columns line up well:
 | `timestamp` | `triggered_at` / `closed_at` | Per state, above. |
 
 Plus: record an `alert_events` (Supabase) activity-timeline row for each
-transition — `event_type='triggered'` on **both** open and close — so the
-UI's alert history view picks up the automation without a second write
-path. (`resolved`/`acknowledged` event types exist in the enum but are
-reserved for user workflow actions, not alert-service transitions.)
+transition — `event_type='triggered'` on open, `event_type='resolved'` on
+close — so the UI's alert history view picks up the automation without a
+second write path. Synthetic closes (`reason` set, see the `Transition`
+schema) log why they closed instead of fabricating a clearing value.
 
 ### Open-close matching
 
@@ -760,6 +809,16 @@ too-tight threshold could flood the notifier on its first evaluation.
 
 ## Changelog
 
+- *2026-08-13* — Alert close-out overhaul. A `closed` transition now also
+  sets `status='resolved'` + `resolved_at` (machine close, `resolved_by`
+  NULL; a prior human resolve is never overwritten) and logs its timeline
+  row as `event_type='resolved'`. Added the fifth boundary endpoint
+  `GET /api/internal/alerts/active` and the reconcile loop (§5) that
+  synthetically closes DB-active alerts stranded by restarts or dropped
+  `closed` batches. Added the optional `reason` field to `Transition`
+  (`rule_deleted` | `reconciled`). Bootstrap (`rules/all`) now filters to
+  threshold/outlier/compound like the push path — offline rules no longer
+  ship to the alert-service at boot.
 - *2026-07-27* — Documented the fourth boundary endpoint `GET /stats`
   (LiveStats) and the `GET /health` alias of `/readyz`. Corrected the
   bootstrap 401 row: all failures are retried uniformly on the

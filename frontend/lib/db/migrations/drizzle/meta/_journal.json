@@ -239,6 +239,13 @@
       "when": 1786573222192,
       "tag": "0033_alert_silence",
       "breakpoints": true
+    },
+    {
+      "idx": 34,
+      "version": "7",
+      "when": 1786641581368,
+      "tag": "0034_needy_vulcan",
+      "breakpoints": true
     }
   ]
 }

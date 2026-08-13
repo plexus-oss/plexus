@@ -2694,6 +2694,13 @@ export interface TransitionWire {
   distribution?: DistSnapshot;
   timestamp: number; // unix seconds
   stats?: AlertStats; // closed transitions only, threshold/outlier rules
+  /**
+   * Synthetic-close provenance, closed transitions only. "rule_deleted" =
+   * the rule vanished from a push while the alert was open; "reconciled" =
+   * the reconcile loop found an active DB row with no live instance (e.g.
+   * after an alert-service restart). Absent on organic closes.
+   */
+  reason?: "rule_deleted" | "reconciled";
 }
 
 export interface DeviceEvent {

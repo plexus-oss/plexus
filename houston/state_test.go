@@ -680,3 +680,70 @@ func TestStateMachine_ReconcileRulesScoping(t *testing.T) {
 		t.Error("cooldown instance should be deleted")
 	}
 }
+
+// ReconcileActiveAlerts: DB-active rows with no live instance get a
+// synthetic close (reason=reconciled); OPEN/CLOSING instances are left
+// alone; COOLDOWN re-emits (repairs a lost close batch).
+func TestReconcileActiveAlerts(t *testing.T) {
+	sink := &mockSink{}
+	asm := newTestASM(sink)
+	t0 := time.Now()
+
+	// r1/drone-1: live OPEN instance.
+	asm.ProcessEvaluation("org1", makeRule("r1"), "drone-1", "temperature",
+		EvalDetail{Triggered: true, Value: 90.0}, zeroDist, t0)
+	// r2/drone-2: CLOSING (cleared, hysteresis running).
+	asm.ProcessEvaluation("org1", makeRule("r2"), "drone-2", "temperature",
+		EvalDetail{Triggered: true, Value: 90.0}, zeroDist, t0)
+	asm.ProcessEvaluation("org1", makeRule("r2"), "drone-2", "temperature",
+		EvalDetail{Value: 70.0}, zeroDist, t0.Add(1*time.Second))
+	// r3/drone-3: COOLDOWN (closed already emitted).
+	asm.ProcessEvaluation("org1", makeRule("r3"), "drone-3", "temperature",
+		EvalDetail{Triggered: true, Value: 90.0}, zeroDist, t0)
+	asm.ProcessEvaluation("org1", makeRule("r3"), "drone-3", "temperature",
+		EvalDetail{Value: 70.0}, zeroDist, t0.Add(1*time.Second))
+	asm.ProcessEvaluation("org1", makeRule("r3"), "drone-3", "temperature",
+		EvalDetail{Value: 70.0}, zeroDist, t0.Add(40*time.Second))
+
+	emittedBefore := len(sink.transitions) // r1 open, r2 open, r3 open+closed
+
+	active := []ActiveAlert{
+		{OrgID: "org1", RuleID: "r1", SourceID: "drone-1", Metric: "temperature", Severity: "warning"},
+		{OrgID: "org1", RuleID: "r2", SourceID: "drone-2", Metric: "temperature", Severity: "warning"},
+		{OrgID: "org1", RuleID: "r3", SourceID: "drone-3", Metric: "temperature", Severity: "warning"},
+		{OrgID: "org1", RuleID: "r4", SourceID: "drone-4", Metric: "temperature", Severity: "critical"},
+	}
+	closed := asm.ReconcileActiveAlerts(active)
+
+	// r1 (OPEN) and r2 (CLOSING) skipped; r3 (COOLDOWN) and r4 (no
+	// instance — the restart-stranded case) closed.
+	if closed != 2 {
+		t.Fatalf("closed = %d, want 2", closed)
+	}
+	synthetic := sink.transitions[emittedBefore:]
+	if len(synthetic) != 2 {
+		t.Fatalf("expected 2 synthetic transitions, got %d", len(synthetic))
+	}
+	for _, tr := range synthetic {
+		if tr.State != "closed" {
+			t.Errorf("state = %q, want closed", tr.State)
+		}
+		if tr.Reason != "reconciled" {
+			t.Errorf("reason = %q, want reconciled", tr.Reason)
+		}
+	}
+	if synthetic[0].RuleID != "r3" || synthetic[1].RuleID != "r4" {
+		t.Errorf("closed rules = %s, %s; want r3, r4",
+			synthetic[0].RuleID, synthetic[1].RuleID)
+	}
+	if synthetic[1].Severity != "critical" {
+		t.Errorf("severity should carry through from the row, got %q", synthetic[1].Severity)
+	}
+
+	// Idempotent for live instances: a second pass with only live rows
+	// emits nothing new.
+	closed = asm.ReconcileActiveAlerts(active[:2])
+	if closed != 0 {
+		t.Errorf("second pass closed = %d, want 0", closed)
+	}
+}

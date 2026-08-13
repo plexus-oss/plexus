@@ -21,6 +21,7 @@
 import "server-only";
 
 import { detectPollOnce } from "@/lib/alerts/detect-poll";
+import { closeOutSweep } from "@/lib/alerts/close-out";
 import { recordLoopTick } from "@/lib/scheduler/loop-heartbeat";
 
 const POLL_INTERVAL_MS = 30_000;
@@ -43,6 +44,13 @@ async function tick(): Promise<void> {
       stats.errors > 0
     ) {
       console.log(JSON.stringify({ event: "poll_scan", ...stats }));
+    }
+    // Close-out hygiene rides the same tick: auto-resolve stale event
+    // alerts, close alerts orphaned by monitor deletion/disable. Never
+    // throws (see lib/alerts/close-out.ts).
+    const closed = await closeOutSweep();
+    if (closed.staleEvents > 0 || closed.orphaned > 0) {
+      console.log(JSON.stringify({ event: "close_out_sweep", ...closed }));
     }
   } finally {
     running = false;

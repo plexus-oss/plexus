@@ -207,24 +207,40 @@ export async function POST(request: NextRequest) {
           continue;
         }
 
-        // Mark condition cleared. Do NOT touch status — resolved/acknowledged
-        // are user workflow actions, not alert-service concerns.
+        // Condition cleared → the alert closes out fully: machine fields
+        // (is_alert_active, closed_at) AND status. A cleared condition is a
+        // resolved alert — leaving status='open' stranded every auto-closed
+        // alert in the Open tab forever. resolved_by stays null (machine
+        // close, not a person); a human resolve that already ran wins —
+        // never overwrite resolved_at/resolved_by/resolution_notes.
+        const isHumanResolved = openAlert.status === "resolved";
         const updated = await adminAlertQueries.update(t.org_id, openAlert.id, {
           is_alert_active: false,
           closed_at: timestampIso,
+          ...(isHumanResolved
+            ? {}
+            : { status: "resolved", resolved_at: timestampIso }),
           ...(t.stats ? { alert_stats: t.stats } : {}),
         });
 
-        // Record timeline event
+        // Record timeline event. Synthetic closes say why they closed
+        // instead of fabricating a clearing value.
+        const closeMessage =
+          t.reason === "rule_deleted"
+            ? "Monitor deleted — alert closed"
+            : t.reason === "reconciled"
+              ? "Closed by reconciliation — the alert service restarted while this alert was open"
+              : `Condition cleared: ${t.metric} = ${t.value}`;
         await adminAlertEventQueries.create(
           t.org_id,
           openAlert.id,
-          "triggered",
+          "resolved",
           {
-            message: `Condition cleared: ${t.metric} = ${t.value}`,
+            message: closeMessage,
             metadata: {
               rule_id: t.rule_id,
               value: t.value,
+              ...(t.reason ? { reason: t.reason } : {}),
               ...(t.distribution ? { distribution: t.distribution } : {}),
             },
           },
@@ -239,8 +255,6 @@ export async function POST(request: NextRequest) {
         // alert-service owns open/close hysteresis upstream, and the unique
         // open index guarantees exactly one open per (rule, source) — so
         // each clear emits at most once, paired with one alert.triggered.
-        // Status is still untouched (user workflow), only the emission
-        // suppression is lifted.
         try {
           await runWithServiceRole(() =>
             triggerAlertWebhook(

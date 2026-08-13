@@ -1217,7 +1217,15 @@ export const adminAlertRuleQueries = {
         severity: alertRules.severity,
       })
       .from(alertRules)
-      .where(eq(alertRules.enabled, true));
+      .where(
+        and(
+          eq(alertRules.enabled, true),
+          // Same type filter as findEnabledByOrgWithSlug below: "offline"
+          // rules are frontend-evaluated absence detection — bootstrapping
+          // them into the alert-service shipped rules it silently ignores.
+          inArray(alertRules.type, ["threshold", "outlier", "compound"]),
+        ),
+      );
     return rows.map((row) => ({
       id: row.id,
       org_id: row.org_id,
@@ -2031,6 +2039,51 @@ export const adminAlertQueries = {
       )
       .limit(1);
     return (row ?? null) as Alert | null;
+  },
+
+  /**
+   * All active rule-based alerts owned by the alert-service, across orgs,
+   * with the source slug the wire contract speaks. Feeds the alert-service's
+   * reconcile loop (GET /api/internal/alerts/active): after a restart its
+   * in-memory instances are gone, and any DB row still active with no
+   * live instance needs a synthetic close. Offline rules are excluded —
+   * they belong to the frontend's detect-offline scan, which closes its
+   * own alerts.
+   */
+  findActiveForAlertService: async (): Promise<
+    Array<{
+      org_id: string;
+      rule_id: string;
+      source_id: string; // slug — matches the transition wire format
+      metric: string;
+      severity: string;
+    }>
+  > => {
+    const rows = await db
+      .select({
+        org_id: alerts.org_id,
+        rule_id: alerts.rule_id,
+        source_slug: sources.slug,
+        metric: alerts.metric,
+        severity: alerts.severity,
+      })
+      .from(alerts)
+      .innerJoin(alertRules, eq(alertRules.id, alerts.rule_id))
+      .innerJoin(sources, eq(sources.id, alerts.source_id))
+      .where(
+        and(
+          eq(alerts.is_alert_active, true),
+          eq(alertRules.enabled, true),
+          inArray(alertRules.type, ["threshold", "outlier", "compound"]),
+        ),
+      );
+    return rows.map((row) => ({
+      org_id: row.org_id,
+      rule_id: row.rule_id as string,
+      source_id: row.source_slug,
+      metric: row.metric,
+      severity: row.severity,
+    }));
   },
 
   /**

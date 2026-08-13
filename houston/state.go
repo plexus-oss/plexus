@@ -90,6 +90,10 @@ type Transition struct {
 	Distribution DistSnapshot `json:"distribution"`
 	Timestamp    int64        `json:"timestamp"`       // unix seconds
 	Stats        *AlertStats  `json:"stats,omitempty"` // closed transitions only, threshold/outlier
+	// Reason marks synthetic closes ("rule_deleted", "reconciled") so the
+	// receiver can log honestly instead of fabricating a clearing value.
+	// Empty on organic transitions.
+	Reason string `json:"reason,omitempty"`
 }
 
 // AlertStats is assembled at alert close and attached to the "closed" Transition.
@@ -405,6 +409,7 @@ func (asm *AlertStateManager) emitSyntheticClose(inst *AlertInstance) {
 		Severity:     inst.Severity,
 		Distribution: inst.LastDist,
 		Timestamp:    inst.ClosedAt.Unix(),
+		Reason:       "rule_deleted",
 	}
 	// DataPointCount is ≥1 iff this was a stats (threshold/outlier) rule.
 	if inst.DataPointCount > 0 {
@@ -414,6 +419,68 @@ func (asm *AlertStateManager) emitSyntheticClose(inst *AlertInstance) {
 		sink.Enqueue(t)
 	}
 	asm.metrics.IncAlertsClosed()
+}
+
+// ActiveAlert is one row from GET /api/internal/alerts/active — an alerts
+// row the frontend still considers active. SourceID is the slug, matching
+// the transition wire format.
+type ActiveAlert struct {
+	OrgID    string `json:"org_id"`
+	RuleID   string `json:"rule_id"`
+	SourceID string `json:"source_id"`
+	Metric   string `json:"metric"`
+	Severity string `json:"severity"`
+}
+
+// ReconcileActiveAlerts closes out DB-active alerts that have no live
+// (OPEN/CLOSING) instance behind them. Instances live only in memory, so a
+// restart strands every active row: no close will ever be emitted for it,
+// and the frontend's unique active-alert index then blocks future opens for
+// that (rule, source) too. A dropped close batch (notifier retries
+// exhausted) wedges the same way — the instance moved on to COOLDOWN but
+// the row never closed. For each such stray this emits a synthetic
+// "closed" transition (reason=reconciled). Returns the number emitted.
+//
+// A COOLDOWN instance means the close was already emitted; re-emitting is
+// safe (the frontend treats a close with no active row as a no-op) and
+// repairs the lost-batch case.
+//
+// Known race: an instance created between the caller's fetch and this call
+// is seen here and skipped (fresh read under the lock) — but an instance
+// created just after this emits could adopt a row we're about to close.
+// The window is one enqueue-to-delivery hop (~seconds every 5 minutes);
+// the next evaluation re-opens a fresh row.
+func (asm *AlertStateManager) ReconcileActiveAlerts(active []ActiveAlert) int {
+	asm.mu.Lock()
+	defer asm.mu.Unlock()
+
+	now := time.Now()
+	closed := 0
+	for _, row := range active {
+		inst, ok := asm.instances[instanceKey(row.RuleID, row.SourceID)]
+		if ok && (inst.State == StateOpen || inst.State == StateClosing) {
+			continue
+		}
+		t := Transition{
+			RuleID:    row.RuleID,
+			OrgID:     row.OrgID,
+			SourceID:  row.SourceID,
+			Metric:    row.Metric,
+			State:     "closed",
+			Severity:  row.Severity,
+			Timestamp: now.Unix(),
+			Reason:    "reconciled",
+		}
+		for _, sink := range asm.sinks {
+			sink.Enqueue(t)
+		}
+		asm.metrics.IncAlertsClosed()
+		closed++
+		slog.Info("alert closed (reconciled)",
+			"org", row.OrgID, "rule", row.RuleID,
+			"source", row.SourceID, "metric", row.Metric)
+	}
+	return closed
 }
 
 // AllInstances returns a snapshot of all alert instances (for health/debug).
