@@ -9,6 +9,8 @@ import {
   parseEpochMs,
   buildAnnotationProposal,
   buildRememberProposal,
+  toolTouchedKeys,
+  toolTouchedWindow,
 } from "../tools";
 
 describe("parseEpochMs", () => {
@@ -106,5 +108,67 @@ describe("buildRememberProposal", () => {
   it("rejects missing source or content", () => {
     expect(buildRememberProposal({ source: "", content: "x" })).toBeNull();
     expect(buildRememberProposal({ source: "drone-001", content: " " })).toBeNull();
+  });
+});
+
+describe("toolTouchedKeys (turn-level ai_label_runs metrics)", () => {
+  it("qualifies source+metric calls as slug:metric", () => {
+    expect(
+      toolTouchedKeys({ source: "drone-001", metric: "battery.voltage" }),
+    ).toEqual(["drone-001:battery.voltage"]);
+  });
+
+  it("qualifies source-only calls as slug:context", () => {
+    expect(toolTouchedKeys({ source: "drone-001" })).toEqual([
+      "drone-001:context",
+    ]);
+  });
+
+  it("handles the dashboard tool's sources array", () => {
+    expect(
+      toolTouchedKeys({ sources: ["drone-001", "drone-002"] }),
+    ).toEqual(["drone-001:context", "drone-002:context"]);
+  });
+
+  it("returns nothing for calls that touch no source", () => {
+    expect(toolTouchedKeys({})).toEqual([]);
+    expect(toolTouchedKeys({ source: "  " })).toEqual([]);
+    expect(toolTouchedKeys(undefined)).toEqual([]);
+  });
+});
+
+describe("toolTouchedWindow (turn-level ai_label_runs window)", () => {
+  it("reads query_metric's absolute start/end (ISO or epoch)", () => {
+    expect(
+      toolTouchedWindow({
+        start: "2026-08-13T12:00:00.000Z",
+        end: "2026-08-13T13:00:00.000Z",
+      }),
+    ).toEqual({
+      startMs: Date.parse("2026-08-13T12:00:00.000Z"),
+      endMs: Date.parse("2026-08-13T13:00:00.000Z"),
+    });
+  });
+
+  it("reads an annotation's start_ms/end_ms", () => {
+    expect(
+      toolTouchedWindow({ start_ms: 1755000000000, end_ms: 1755000180000 }),
+    ).toEqual({ startMs: 1755000000000, endMs: 1755000180000 });
+  });
+
+  it("collapses a missing or inverted end to an instant", () => {
+    expect(toolTouchedWindow({ start_ms: 1755000000000 })).toEqual({
+      startMs: 1755000000000,
+      endMs: 1755000000000,
+    });
+    expect(
+      toolTouchedWindow({ start_ms: 1755000000000, end_ms: 1754999999999 }),
+    ).toEqual({ startMs: 1755000000000, endMs: 1755000000000 });
+  });
+
+  it("returns null when the call carries no absolute window", () => {
+    expect(toolTouchedWindow({})).toBeNull();
+    expect(toolTouchedWindow({ range: "1h" })).toBeNull();
+    expect(toolTouchedWindow(undefined)).toBeNull();
   });
 });

@@ -26,6 +26,7 @@ import {
   Copy,
   Check,
   ArrowRight,
+  Brain,
   Shield,
   Upload,
   X,
@@ -503,6 +504,30 @@ function SettingsPageContent() {
                       value={localTimeFormat ?? settings.use12HourFormat}
                       onChange={handleTimeFormatChange}
                     />
+                  </div>
+                </Card>
+
+                <SectionHeader>Intelligence</SectionHeader>
+                <Card className="p-4">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                      <div className="p-2 rounded-lg bg-primary/10">
+                        <Brain className="h-5 w-5 text-primary" />
+                      </div>
+                      <div>
+                        <p className="text-sm font-medium">Intelligence</p>
+                        <p className="text-xs text-muted-foreground">
+                          Audit log of model runs — what the model saw,
+                          proposed, and what you decided.
+                        </p>
+                      </div>
+                    </div>
+                    <Link href="/intelligence">
+                      <Button size="sm" variant="outline" className="text-xs">
+                        Open
+                        <ArrowRight className="h-3 w-3 ml-1.5" />
+                      </Button>
+                    </Link>
                   </div>
                 </Card>
 

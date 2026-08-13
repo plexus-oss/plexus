@@ -17,6 +17,8 @@ import {
   buildUpdateConnectionProposal,
   buildAnnotationProposal,
   buildRememberProposal,
+  toolTouchedKeys,
+  toolTouchedWindow,
   type ToolCtx,
   type TerminalProposal,
 } from "@/lib/ai/terminal/tools";
@@ -43,27 +45,85 @@ interface InMsg {
 }
 
 /**
- * Persist a Terminal-originated annotation/remember proposal as an
- * ai_label_runs row — the same observability record the chart labeling flow
- * writes, read by /intelligence — and attach the run linkage to the proposal
- * so the card's Apply/Dismiss stamps the human verdict onto it (via the
- * existing /api/assistant/label/verdict route). Best-effort: if the insert
- * fails the card still renders, just without verdict tracking.
+ * The audit record of ONE assistant turn (one POST = one streamed response,
+ * tool loop included), accumulated while the turn runs and persisted as ONE
+ * ai_label_runs row — the same record the chart labeling flow writes, read by
+ * /intelligence. The row is created lazily at the FIRST annotation/remember
+ * proposal (so the streamed card carries run linkage for verdict stamping)
+ * and finalized when the turn completes; a turn with no proposals inserts its
+ * row at turn end with an empty observations array.
  */
-async function attachLabelRun(
+interface TurnRecord {
+  /** Set once the row exists (first proposal); null until then. */
+  runId: string | null;
+  /** Wall-clock start of the turn — latency_ms is measured from here. */
+  startedAt: number;
+  /** Deduped qualified `slug:metric` / `slug:context` keys tool calls touched. */
+  metrics: Set<string>;
+  /** Union of the absolute windows tool calls carried (null when none did). */
+  windowStartMs: number | null;
+  windowEndMs: number | null;
+}
+
+/**
+ * Fold one tool call's touched keys + window into the turn record.
+ */
+function recordToolCall(turn: TurnRecord, input: unknown): void {
+  for (const key of toolTouchedKeys(input)) turn.metrics.add(key);
+  const w = toolTouchedWindow(input);
+  if (w) {
+    turn.windowStartMs =
+      turn.windowStartMs === null
+        ? w.startMs
+        : Math.min(turn.windowStartMs, w.startMs);
+    turn.windowEndMs =
+      turn.windowEndMs === null ? w.endMs : Math.max(turn.windowEndMs, w.endMs);
+  }
+}
+
+/** The turn's finalized run fields, computed from the accumulated record. */
+function turnRunFields(turn: TurnRecord, inTokens: number, outTokens: number) {
+  return {
+    latency_ms: Date.now() - turn.startedAt,
+    input_tokens: inTokens,
+    output_tokens: outTokens,
+    metrics: Array.from(turn.metrics),
+    window_start:
+      turn.windowStartMs !== null
+        ? new Date(turn.windowStartMs).toISOString()
+        : null,
+    window_end:
+      turn.windowEndMs !== null
+        ? new Date(turn.windowEndMs).toISOString()
+        : null,
+  };
+}
+
+/**
+ * Attach an annotation/remember proposal to the turn's ai_label_runs row as
+ * one observation — creating the row on the first proposal, appending (a
+ * targeted jsonb concat that can't clobber earlier verdicts) afterwards —
+ * and thread run_id + observation index into the proposal so the card's
+ * Apply/Dismiss stamps the human verdict onto it (via the existing
+ * /api/assistant/label/verdict route). Best-effort: if the write fails the
+ * card still renders, just without verdict tracking.
+ */
+async function attachProposalObservation(
   proposal: TerminalProposal,
   ctx: ToolCtx,
-  metrics: string[],
+  turn: TurnRecord,
+  inTokens: number,
+  outTokens: number,
 ): Promise<void> {
   const isAnnotation = proposal.kind === "annotation";
   const body = proposal.body as Record<string, unknown>;
-  const now = new Date().toISOString();
-  const startIso = isAnnotation ? String(body.timestamp_start) : now;
-  const endIso =
-    isAnnotation && body.timestamp_end ? String(body.timestamp_end) : startIso;
-  const startMs = isAnnotation ? new Date(startIso).getTime() : null;
+  const startMs = isAnnotation
+    ? new Date(String(body.timestamp_start)).getTime()
+    : null;
   const endMs =
-    isAnnotation && body.timestamp_end ? new Date(endIso).getTime() : null;
+    isAnnotation && body.timestamp_end
+      ? new Date(String(body.timestamp_end)).getTime()
+      : null;
   const label = isAnnotation ? String(body.label) : String(body.content);
   const observation: LabelRunObservation = {
     label,
@@ -76,25 +136,33 @@ async function attachLabelRun(
     verdict_at: null,
   };
   try {
-    const run = await aiLabelRunQueries.insert({
-      org_id: ctx.orgId,
-      user_id: ctx.userId ?? null,
-      provider: "anthropic",
-      model: MODEL,
-      latency_ms: 0,
-      input_tokens: null,
-      output_tokens: null,
-      // Qualified slug-prefixed keys, same shape as label runs —
-      // /intelligence scopes run visibility and names the source off these.
-      metrics,
-      window_start: startIso,
-      window_end: endIso,
-      context_items: [],
-      observations: [observation],
-    });
+    let index: number;
+    if (turn.runId === null) {
+      // First proposal of the turn — create the row now so the card can carry
+      // run linkage. Fields are provisional; finalized at turn end.
+      const run = await aiLabelRunQueries.insert({
+        org_id: ctx.orgId,
+        user_id: ctx.userId ?? null,
+        provider: "anthropic",
+        model: MODEL,
+        ...turnRunFields(turn, inTokens, outTokens),
+        context_items: [],
+        observations: [observation],
+      });
+      turn.runId = run.id;
+      index = 0;
+    } else {
+      const appended = await aiLabelRunQueries.appendObservation(
+        ctx.orgId,
+        turn.runId,
+        observation,
+      );
+      if (appended === null) return; // row vanished — card renders untracked
+      index = appended;
+    }
     proposal.verdict = {
-      runId: run.id,
-      index: 0,
+      runId: turn.runId,
+      index,
       kind: observation.kind,
       label: label.slice(0, 200),
       startMs,
@@ -102,6 +170,38 @@ async function attachLabelRun(
     };
   } catch {
     /* best-effort — see above */
+  }
+}
+
+/**
+ * Persist the turn's final audit record: insert the row for turns that made
+ * no proposals, finalize latency/tokens/metrics/window for turns whose row
+ * was created at first proposal. Never touches observations after creation —
+ * verdicts may already be stamped on them. Best-effort.
+ */
+async function finalizeTurnRun(
+  ctx: ToolCtx,
+  turn: TurnRecord,
+  inTokens: number,
+  outTokens: number,
+): Promise<void> {
+  try {
+    const fields = turnRunFields(turn, inTokens, outTokens);
+    if (turn.runId === null) {
+      await aiLabelRunQueries.insert({
+        org_id: ctx.orgId,
+        user_id: ctx.userId ?? null,
+        provider: "anthropic",
+        model: MODEL,
+        ...fields,
+        context_items: [],
+        observations: [],
+      });
+    } else {
+      await aiLabelRunQueries.finalize(ctx.orgId, turn.runId, fields);
+    }
+  } catch {
+    /* best-effort — the audit record must never break the stream */
   }
 }
 
@@ -150,8 +250,17 @@ export const POST = withAuth(async (request, { orgId, userId, orgRole }) => {
 
       let aiInTokens = 0;
       let aiOutTokens = 0;
+      // One ai_label_runs row per assistant turn — the audit record
+      // /intelligence shows, proposals or not.
+      const turn: TurnRecord = {
+        runId: null,
+        startedAt: Date.now(),
+        metrics: new Set(),
+        windowStartMs: null,
+        windowEndMs: null,
+      };
       try {
-        for (let turn = 0; turn < MAX_TURNS; turn++) {
+        for (let round = 0; round < MAX_TURNS; round++) {
           const ms = client.messages.stream({
             model: MODEL,
             max_tokens: 1024,
@@ -170,6 +279,7 @@ export const POST = withAuth(async (request, { orgId, userId, orgRole }) => {
           const results: Anthropic.ToolResultBlockParam[] = [];
           for (const block of final.content) {
             if (block.type !== "tool_use") continue;
+            recordToolCall(turn, block.input);
             send({ type: "tool", name: block.name, status: "running" });
 
             // show_metric is special: it renders a live panel inline (dynamic
@@ -370,8 +480,9 @@ export const POST = withAuth(async (request, { orgId, userId, orgRole }) => {
             }
 
             // propose_annotation / propose_remember — label-flow proposals
-            // originating in the Terminal. Persist the ai_label_runs row FIRST
-            // so the streamed card carries run linkage for verdict stamping.
+            // originating in the Terminal. Persist the observation onto the
+            // turn's ai_label_runs row FIRST so the streamed card carries run
+            // linkage for verdict stamping.
             if (
               block.name === "propose_annotation" ||
               block.name === "propose_remember"
@@ -381,16 +492,13 @@ export const POST = withAuth(async (request, { orgId, userId, orgRole }) => {
                 ? buildAnnotationProposal(block.input)
                 : buildRememberProposal(block.input);
               if (proposal) {
-                // Annotations key the run by their real slug:metric; memories
-                // have no metric, so key by the source's context — that keeps
-                // /intelligence access-scoping (slug-prefixed) intact.
-                const src = String(
-                  (block.input as { source?: unknown })?.source ?? "",
-                ).trim();
-                const runMetrics = isAnnotation
-                  ? (proposal.previewMetrics ?? [])
-                  : [`${src}:context`];
-                await attachLabelRun(proposal, ctx, runMetrics);
+                await attachProposalObservation(
+                  proposal,
+                  ctx,
+                  turn,
+                  aiInTokens,
+                  aiOutTokens,
+                );
                 send({ type: "proposal", proposal });
                 send({ type: "tool", name: block.name, status: "done" });
                 results.push({
@@ -494,6 +602,9 @@ export const POST = withAuth(async (request, { orgId, userId, orgRole }) => {
           message: "The Terminal hit an error. Try again.",
         });
       } finally {
+        // The turn's audit record — written even when the loop errored, so
+        // every assistant turn leaves exactly one row.
+        await finalizeTurnRun(ctx, turn, aiInTokens, aiOutTokens);
         recordAiTokens(ctx.orgId, MODEL, aiInTokens, aiOutTokens);
         controller.close();
       }

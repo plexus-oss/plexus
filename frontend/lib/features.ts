@@ -20,7 +20,6 @@ import {
   KeyRound,
   Terminal,
   FlaskConical,
-  Brain,
   type LucideIcon,
 } from "lucide-react";
 
@@ -118,12 +117,10 @@ export const FEATURES: Record<FeatureKey, Feature> = {
     href: "/events",
     section: "observe",
   },
-  intelligence: {
-    label: "Intelligence",
-    icon: Brain,
-    href: "/intelligence",
-    section: "observe",
-  },
+  // Audit log of model runs. Deliberately no nav section — the record is
+  // essential, the page isn't a destination. Reached from Settings; the href
+  // stays registered so /intelligence page-view normalization keeps working.
+  intelligence: { href: "/intelligence" },
 
   // Staff-only admin console. Not a paywall — gated by the internal layout's
   // staff check and the is_staff assertion in every /api/internal route.

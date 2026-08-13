@@ -576,6 +576,37 @@ export function buildUpdateConnectionProposal(input: unknown): TerminalProposal 
   };
 }
 
+/**
+ * Qualified keys one tool call touches — `slug:metric` when the call names a
+ * metric, `slug:context` when it only names source(s). Deduped across the
+ * turn, these key the turn's ai_label_runs row: /intelligence scopes run
+ * visibility and names the source off the slug prefix.
+ */
+export function toolTouchedKeys(input: unknown): string[] {
+  const a = (input ?? {}) as Record<string, unknown>;
+  const metric = typeof a.metric === "string" ? a.metric.trim() : "";
+  const sources = [...(Array.isArray(a.sources) ? a.sources : []), a.source]
+    .map((s) => String(s ?? "").trim())
+    .filter(Boolean);
+  return sources.map((s) => (metric ? `${s}:${metric}` : `${s}:context`));
+}
+
+/**
+ * The absolute time window one tool call carried, if any — query_metric's
+ * start/end or an annotation's start_ms/end_ms — as epoch ms. A missing or
+ * inverted end collapses to the start (an instant). Null when the call
+ * carries no window (relative ranges don't count).
+ */
+export function toolTouchedWindow(
+  input: unknown,
+): { startMs: number; endMs: number } | null {
+  const a = (input ?? {}) as Record<string, unknown>;
+  const startMs = parseEpochMs(a.start ?? a.start_ms);
+  if (startMs === null) return null;
+  const end = parseEpochMs(a.end ?? a.end_ms);
+  return { startMs, endMs: end !== null && end > startMs ? end : startMs };
+}
+
 /** Epoch-ms parser tolerant of the forms a model produces: a number, a numeric
  *  string, or an ISO 8601 timestamp. Null when unparseable. */
 export function parseEpochMs(v: unknown): number | null {

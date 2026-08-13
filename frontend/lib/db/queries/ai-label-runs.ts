@@ -1,6 +1,7 @@
 /**
- * Labeling-run persistence — one row per inference call of the labeling model
- * (POST /api/assistant/label). The row is the full observability record:
+ * Model-run persistence — one row per inference call of the labeling model
+ * (POST /api/assistant/label) and one row per Terminal assistant turn
+ * (POST /api/assistant/terminal). The row is the full audit record:
  * retrieval (context_items), output (observations), performance
  * (provider/model/latency/tokens), and the human verdicts patched into the
  * observations jsonb afterwards (the reinforcement signal). Read by
@@ -77,13 +78,59 @@ export const aiLabelRunQueries = {
     input_tokens?: number | null;
     output_tokens?: number | null;
     metrics: string[];
-    window_start: string;
-    window_end: string;
+    window_start: string | null;
+    window_end: string | null;
     context_items: LabelRunContextItem[];
     observations: LabelRunObservation[];
   }): Promise<AiLabelRun> => {
     const [row] = await db.insert(aiLabelRuns).values(data).returning(cols);
     return row as AiLabelRun;
+  },
+
+  /**
+   * Append one observation to a run's observations array — a targeted jsonb
+   * concat, so verdicts already stamped on earlier observations are never
+   * clobbered. Returns the appended observation's index (array length − 1),
+   * or null when the run doesn't exist in this org.
+   */
+  appendObservation: async (
+    orgId: string,
+    runId: string,
+    observation: LabelRunObservation,
+  ): Promise<number | null> => {
+    const rows = await db
+      .update(aiLabelRuns)
+      .set({
+        observations: sql`${aiLabelRuns.observations} || ${JSON.stringify(observation)}::jsonb`,
+      })
+      .where(and(eq(aiLabelRuns.org_id, orgId), eq(aiLabelRuns.id, runId)))
+      .returning({
+        count: sql<number>`jsonb_array_length(${aiLabelRuns.observations})`,
+      });
+    return rows.length > 0 ? Number(rows[0].count) - 1 : null;
+  },
+
+  /**
+   * Finalize a run's turn-level fields (latency/tokens/metrics/window) once
+   * the assistant turn completes. Deliberately does NOT touch observations —
+   * those are appended per proposal and may already carry verdicts.
+   */
+  finalize: async (
+    orgId: string,
+    runId: string,
+    data: {
+      latency_ms: number;
+      input_tokens: number | null;
+      output_tokens: number | null;
+      metrics: string[];
+      window_start: string | null;
+      window_end: string | null;
+    },
+  ): Promise<void> => {
+    await db
+      .update(aiLabelRuns)
+      .set(data)
+      .where(and(eq(aiLabelRuns.org_id, orgId), eq(aiLabelRuns.id, runId)));
   },
 
   /** Most recent runs for an org, newest first. */

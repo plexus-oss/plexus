@@ -1,10 +1,10 @@
 "use client";
 
 /**
- * Intelligence — model observability for the labeling loop.
- *
- * One page answering "is the model performing, what is it retrieving, and
- * what are humans teaching it": a 7-day summary strip, the recent inference
+ * Intelligence — the audit log of model runs. Not a nav destination (reached
+ * from Settings): every run — labeling calls and Terminal turns, including
+ * pure investigations that proposed nothing — with what the model saw, what
+ * it proposed, and what the human decided. A 7-day summary strip, the recent
  * runs (each row opens a read-only detail sheet with the retrieval record and
  * per-proposal verdicts), and the model's own memory (context notes it asked
  * to remember, deletable here). Data: GET /api/intelligence.
@@ -163,7 +163,7 @@ export default function IntelligencePage() {
   return (
     <PageWrapper
       title="Intelligence"
-      description="How the labeling model is performing"
+      description="Every model run — what it saw, what it proposed, what you decided."
     >
       <div className="flex flex-col h-full">
         <div className="flex-1 flex flex-col overflow-hidden p-2">
@@ -323,13 +323,17 @@ function RunsTable({
               {/* Source / metrics */}
               <TableCell className="px-3 py-2.5">
                 <span className="text-sm font-medium truncate max-w-[220px] inline-block align-middle">
-                  {slugs.map((s) => sources[s]?.name || s).join(", ")}
+                  {slugs.length > 0
+                    ? slugs.map((s) => sources[s]?.name || s).join(", ")
+                    : "—"}
                 </span>
-                <span className="text-xs text-muted-foreground align-middle">
-                  {" "}
-                  · {run.metrics.length} metric
-                  {run.metrics.length !== 1 ? "s" : ""}
-                </span>
+                {run.metrics.length > 0 && (
+                  <span className="text-xs text-muted-foreground align-middle">
+                    {" "}
+                    · {run.metrics.length} metric
+                    {run.metrics.length !== 1 ? "s" : ""}
+                  </span>
+                )}
               </TableCell>
 
               {/* Model */}
