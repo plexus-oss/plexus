@@ -39,6 +39,14 @@ export interface TelemetryPoint {
    */
   sum?: number;
   count?: number;
+  /**
+   * Per-bucket extremes on downsampled/rollup resolutions, forwarded from the
+   * server's AdaptivePoint. Absent on raw-tier, realtime WS, and legacy
+   * payloads. Charts use these to draw the bucket envelope so spikes inside a
+   * bucket aren't erased by the average (see use-chart-series).
+   */
+  min?: number;
+  max?: number;
   source_id?: string | null;
 }
 

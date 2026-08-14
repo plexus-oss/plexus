@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import type { TelemetryData, TelemetryPoint } from "@/components/dashboard/telemetry-provider";
-import { downsampleLTTB } from "@/lib/data-utils";
+import { expandBucketEnvelope, m4Decimate } from "@/lib/data-utils";
 import { formatTimeInZone } from "@/lib/timezone";
 
 /**
@@ -13,7 +13,7 @@ import { formatTimeInZone } from "@/lib/timezone";
  * hot path during live rendering, so we cache the last result per-metric and
  * only convert the appended tail when it's detected.
  */
-type XyPoint = { x: number; y: number };
+type XyPoint = { x: number; y: number; min?: number; max?: number };
 interface ConversionCacheEntry {
 	input: TelemetryPoint[];
 	output: XyPoint[];
@@ -47,7 +47,7 @@ function convertPointsWithCache(
 		const appended: XyPoint[] = new Array(points.length - cachedLen);
 		for (let i = 0; i < appended.length; i++) {
 			const p = points[cachedLen + i];
-			appended[i] = { x: new Date(p.timestamp).getTime(), y: p.value };
+			appended[i] = toXyPoint(p);
 		}
 		const next = appended.length === 0 ? reused : reused.concat(appended);
 		cache.set(key, { input: points, output: next });
@@ -57,10 +57,21 @@ function convertPointsWithCache(
 	// or first-run).
 	const out: XyPoint[] = new Array(points.length);
 	for (let i = 0; i < points.length; i++) {
-		const p = points[i];
-		out[i] = { x: new Date(p.timestamp).getTime(), y: p.value };
+		out[i] = toXyPoint(points[i]);
 	}
 	cache.set(key, { input: points, output: out });
+	return out;
+}
+
+/**
+ * Convert one telemetry point, carrying the bucket min/max through when the
+ * server sent them (rollup/downsampled tiers) so the envelope expansion below
+ * can restore intra-bucket spikes the average erases.
+ */
+function toXyPoint(p: TelemetryPoint): XyPoint {
+	const out: XyPoint = { x: new Date(p.timestamp).getTime(), y: p.value };
+	if (p.min !== undefined) out.min = p.min;
+	if (p.max !== undefined) out.max = p.max;
 	return out;
 }
 
@@ -239,6 +250,26 @@ export function useChartSeries({
 		conversionCache,
 	]);
 
+	// ── Bucket envelope: draw rollup min/max, not just the average ──
+	// Aggregated tiers (downsampled/1m/1h) deliver one avg point per bucket;
+	// plotting only the avg erases every spike inside the bucket. Expand each
+	// point that carries a min/max spread into min → avg → max (avg keeps its
+	// timestamp; extremes sit ±¼ bucket-gap around it), so the drawn line spans
+	// the bucket's true vertical extent — the same envelope M4 preserves on raw
+	// data. Line/area only: bar bucketing re-aggregates y values (sum would
+	// triple-count) and scatter would draw the extremes as fake samples.
+	const envelopeSeries = useMemo(() => {
+		if (chartType !== "line" && chartType !== "area") return baseSeries;
+		let changed = false;
+		const mapped = baseSeries.map((s) => {
+			const expanded = expandBucketEnvelope(s.data);
+			if (expanded === s.data) return s;
+			changed = true;
+			return { ...s, data: expanded };
+		});
+		return changed ? mapped : baseSeries;
+	}, [baseSeries, chartType]);
+
 	// Wall-clock "now" for the past/future split, refreshed each second while
 	// future-dashing is on. Sampling via state keeps Date.now() out of render.
 	const [now, setNow] = useState(() => Date.now());
@@ -250,17 +281,18 @@ export function useChartSeries({
 
 	// ── Future dashing: split at "now" — past solid, future dashed ──
 	const dashedSeries = useMemo(() => {
-		if (!showFutureDashing || baseSeries.length === 0) return baseSeries;
+		if (!showFutureDashing || envelopeSeries.length === 0)
+			return envelopeSeries;
 
 		const futureThreshold = now + 5_000;
 
-		const hasFutureData = baseSeries.some((s) =>
+		const hasFutureData = envelopeSeries.some((s) =>
 			s.data.some((p) => p.x > futureThreshold),
 		);
-		if (!hasFutureData) return baseSeries;
+		if (!hasFutureData) return envelopeSeries;
 
 		const result: ChartSeries[] = [];
-		for (const s of baseSeries) {
+		for (const s of envelopeSeries) {
 			const pastPoints = s.data.filter((p) => p.x <= now);
 			const futurePoints = s.data.filter((p) => p.x > now);
 			if (pastPoints.length > 0) {
@@ -277,15 +309,20 @@ export function useChartSeries({
 			}
 		}
 		return result;
-	}, [baseSeries, showFutureDashing, now]);
+	}, [envelopeSeries, showFutureDashing, now]);
 
-	// ── Decimation: LTTB downsample based on chart width ──
+	// ── Decimation: M4 downsample based on chart width ──
+	// One bin per pixel column, keeping each column's first/min/max/last —
+	// unlike LTTB, the drawn envelope is exact at pixel resolution, so a
+	// single-sample spike survives at any width (PlotJuggler-style fidelity).
 	const decimatedSeries = useMemo(() => {
 		if (dashedSeries.length === 0 || chartWidth === 0) return dashedSeries;
 		const pointBudget = Math.max(200, chartWidth * 2);
+		// ~1 bin per pixel column (budget = 2×width) → ≤ 4 points per column.
+		const columns = Math.max(100, Math.ceil(pointBudget / 2));
 		return dashedSeries.map((s) => {
 			if (s.data.length <= pointBudget) return s;
-			return { ...s, data: downsampleLTTB(s.data, pointBudget) };
+			return { ...s, data: m4Decimate(s.data, columns) };
 		});
 	}, [dashedSeries, chartWidth]);
 
