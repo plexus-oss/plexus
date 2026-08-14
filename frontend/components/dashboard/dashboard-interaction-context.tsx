@@ -78,6 +78,14 @@ interface DashboardInteractionContextType {
 	/** ISO timestamp string of the currently hovered point (shared across panels) */
 	hoveredTimestamp: string | null;
 	setHoveredTimestamp: (timestamp: string | null) => void;
+	/**
+	 * ISO timestamp of the click-pinned time tracker (shared across panels).
+	 * Transient UI state — never persisted to dashboard config. Renders as a
+	 * solid accent line on every time-axis chart panel, independent of the
+	 * dashboard's crosshair-sync (syncTooltips) setting.
+	 */
+	pinnedTimestamp: string | null;
+	setPinnedTimestamp: (timestamp: string | null) => void;
 	/** Change the dashboard time range (used by pan-zoom, time picker, etc.) */
 	onTimeRangeChange: (timeRange: TimeRange) => void;
 	/** Transient view window during active pan/zoom — overrides chart domain for instant feedback */
@@ -113,6 +121,8 @@ const DashboardInteractionContext =
 	createContext<DashboardInteractionContextType>({
 		hoveredTimestamp: null,
 		setHoveredTimestamp: () => {},
+		pinnedTimestamp: null,
+		setPinnedTimestamp: () => {},
 		onTimeRangeChange: () => {},
 		viewWindow: null,
 		setViewWindow: () => {},
@@ -148,6 +158,7 @@ export function DashboardInteractionProvider({
 	syncTooltips = false,
 }: DashboardInteractionProviderProps) {
 	const [hoveredTimestamp, setHoveredTimestamp] = useState<string | null>(null);
+	const [pinnedTimestamp, setPinnedTimestamp] = useState<string | null>(null);
 	const [viewWindow, setViewWindowState] = useState<ViewWindow | null>(null);
 	const [compareRuns, setCompareRuns] = useState<CompareRun[]>([]);
 	const [hoveredValues, setHoveredValuesState] = useState<
@@ -241,6 +252,8 @@ export function DashboardInteractionProvider({
 		() => ({
 			hoveredTimestamp,
 			setHoveredTimestamp,
+			pinnedTimestamp,
+			setPinnedTimestamp,
 			onTimeRangeChange,
 			viewWindow,
 			setViewWindow,
@@ -259,6 +272,7 @@ export function DashboardInteractionProvider({
 		}),
 		[
 			hoveredTimestamp,
+			pinnedTimestamp,
 			onTimeRangeChange,
 			viewWindow,
 			setViewWindow,

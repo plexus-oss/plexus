@@ -14,7 +14,7 @@ import type {
   ConnectionDataSource,
 } from "@/lib/types/dashboard";
 import { getTimeRangeBounds } from "@/lib/types/dashboard";
-import { Table2, ChevronDown, ChevronUp, AlertTriangle } from "lucide-react";
+import { Table2, ChevronDown, ChevronUp, AlertTriangle, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
   formatValue,
@@ -22,6 +22,7 @@ import {
   measureTextWidth,
 } from "@/components/ui/charts/base-chart";
 import { formatPanelValue } from "@/lib/dashboard/format-value";
+import { formatDeltaMs } from "@/lib/dashboard/format-delta";
 import { Spinner } from "@/components/ui/spinner";
 import {
   PanelEmptyState,
@@ -229,6 +230,8 @@ export function ChartPanel({
   const {
     hoveredTimestamp,
     setHoveredTimestamp,
+    pinnedTimestamp,
+    setPinnedTimestamp,
     setHoveredValues,
     clearHoveredValues,
     viewWindow,
@@ -631,6 +634,103 @@ export function ChartPanel({
     clearHoveredValues(panel.id);
   }, [setHoveredTimestamp, clearHoveredValues, panel.id]);
 
+  // ── Pinned time tracker ──
+  // A plain click (no drag, no modifiers) pins a shared tracker at the clicked
+  // timestamp. Time-axis charts only: metric-vs-metric (xAxisField) panels have
+  // no time x-axis, and bar charts plot discrete category slots, so a
+  // pixel↔time mapping there would lie.
+  const isTimeAxisChart = !panel.config.xAxisField && chartType !== "bar";
+  const pinMs = useMemo(() => {
+    if (!pinnedTimestamp) return null;
+    const ms = new Date(pinnedTimestamp).getTime();
+    return Number.isFinite(ms) ? ms : null;
+  }, [pinnedTimestamp]);
+
+  // Series values at the pinned time — same closest-point machinery as the
+  // hover readout (binarySearchClosestX + HoveredValue), recomputed as live
+  // data streams in.
+  const pinnedValues = useMemo<HoveredValue[]>(() => {
+    if (pinMs == null || !isTimeAxisChart || !xDomain) return [];
+    const xRange = xDomain[1] - xDomain[0];
+    if (xRange <= 0) return [];
+    const values: HoveredValue[] = [];
+    for (const s of timeSeries) {
+      const closest = binarySearchClosestX(s.data, pinMs, xRange * 0.05);
+      if (closest)
+        values.push({ name: s.name, value: closest.y, color: s.color });
+    }
+    return values;
+  }, [pinMs, isTimeAxisChart, xDomain, timeSeries]);
+
+  // Click-vs-drag: mirror use-chart-pan-zoom's 4px threshold with our own
+  // pointer-down tracking — the hook resets its isPanning flag on pointerup,
+  // before the click event fires, so it can't be consulted here.
+  const PIN_CLICK_TOLERANCE_PX = 4;
+  const pinDownRef = useRef<{ x: number; y: number } | null>(null);
+  // Pin placement is deferred ~200ms so the second click of a double-click
+  // (pan-zoom's reset gesture) can cancel it — zoom reset must not also pin.
+  const pinClickTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(
+    () => () => {
+      if (pinClickTimer.current) clearTimeout(pinClickTimer.current);
+    },
+    [],
+  );
+
+  const handleChartPointerDown = useCallback((e: React.PointerEvent) => {
+    pinDownRef.current = { x: e.clientX, y: e.clientY };
+  }, []);
+
+  const handleChartClick = useCallback(
+    (e: React.MouseEvent<HTMLDivElement>) => {
+      if (!isTimeAxisChart) return;
+      // Annotation mode owns click/drag on the plot, exactly like it does for pan.
+      if (ann.mode === "on") return;
+      // Shift = brush, Ctrl/Cmd = pan modifier — never pin from those.
+      if (e.shiftKey || e.ctrlKey || e.metaKey) return;
+      // Interactive overlay children (alert bands, annotation markers,
+      // reference-line chips) own their clicks — don't also pin.
+      if (e.target instanceof Element && e.target.closest("button")) return;
+      if (e.detail > 1) {
+        // Second click of a double-click (zoom reset) — abort the pending pin.
+        if (pinClickTimer.current) {
+          clearTimeout(pinClickTimer.current);
+          pinClickTimer.current = null;
+        }
+        return;
+      }
+      // A drag that ended here is a pan/brush, not a click.
+      const down = pinDownRef.current;
+      if (down && Math.abs(e.clientX - down.x) >= PIN_CLICK_TOLERANCE_PX)
+        return;
+      const rect = chartContainerRef.current?.getBoundingClientRect();
+      if (!rect || !xDomain) return;
+      const iw = rect.width - chartMargin.left - chartMargin.right;
+      const xRange = xDomain[1] - xDomain[0];
+      if (iw <= 0 || xRange <= 0) return;
+      const clickX = e.clientX - rect.left;
+      if (clickX < chartMargin.left || clickX > rect.width - chartMargin.right)
+        return;
+      // Clicking on (±4px of) the existing pin clears it; elsewhere moves it.
+      const nearPin =
+        pinMs != null &&
+        Math.abs(
+          clickX - (chartMargin.left + ((pinMs - xDomain[0]) / xRange) * iw),
+        ) <= PIN_CLICK_TOLERANCE_PX;
+      const next = nearPin
+        ? null
+        : new Date(
+            xDomain[0] + ((clickX - chartMargin.left) / iw) * xRange,
+          ).toISOString();
+      if (pinClickTimer.current) clearTimeout(pinClickTimer.current);
+      pinClickTimer.current = setTimeout(() => {
+        setPinnedTimestamp(next);
+        pinClickTimer.current = null;
+      }, 200);
+    },
+    [isTimeAxisChart, ann.mode, xDomain, chartMargin, pinMs, setPinnedTimestamp],
+  );
+
   // Annotation drag-to-select / click
   const DRAG_THRESHOLD = 8;
   const dragStartRef = useRef<{
@@ -847,6 +947,8 @@ export function ChartPanel({
           onMouseUp={(e) => {
             if (ann.mode === "on") handleAnnotationMouseUp(e);
           }}
+          onPointerDown={handleChartPointerDown}
+          onClick={handleChartClick}
         >
           <UnifiedChart
             type={chartType}
@@ -963,6 +1065,100 @@ export function ChartPanel({
                     height: innerHeight,
                   }}
                 />
+              );
+            })()}
+
+          {/* Pinned time tracker — solid accent line (vs the hairline hover
+              crosshair), per-series readout, and Δt to the hovered time.
+              Renders on every time-axis chart regardless of syncTooltips. */}
+          {pinMs != null &&
+            isTimeAxisChart &&
+            xDomain &&
+            innerWidth > 0 &&
+            (() => {
+              const xRange = xDomain[1] - xDomain[0];
+              if (xRange <= 0) return null;
+              const px =
+                chartMargin.left + ((pinMs - xDomain[0]) / xRange) * innerWidth;
+              if (
+                px < chartMargin.left ||
+                px > chartSize.width - chartMargin.right
+              )
+                return null;
+              const hoverMs = hoveredTimestamp
+                ? new Date(hoveredTimestamp).getTime()
+                : null;
+              const deltaMs =
+                hoverMs != null && Number.isFinite(hoverMs)
+                  ? hoverMs - pinMs
+                  : null;
+              // Keep the readout inside the plot: flip sides past the midline.
+              const flip = px > chartSize.width / 2;
+              return (
+                <>
+                  <div
+                    className="absolute pointer-events-none z-10 bg-primary/70"
+                    style={{
+                      left: px,
+                      top: chartMargin.top,
+                      width: 1,
+                      height: innerHeight,
+                    }}
+                  />
+                  {ann.mode !== "on" && (
+                    <button
+                      type="button"
+                      aria-label="Clear pinned time"
+                      title="Clear pinned time"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setPinnedTimestamp(null);
+                      }}
+                      className="absolute z-30 flex h-3.5 w-3.5 items-center justify-center rounded-full border border-primary/50 bg-background text-muted-foreground transition-colors hover:border-primary hover:text-foreground"
+                      style={{ left: px - 7, top: chartMargin.top - 7 }}
+                    >
+                      <X className="h-2.5 w-2.5" />
+                    </button>
+                  )}
+                  <div
+                    className="absolute pointer-events-none z-20 space-y-0.5 rounded border border-border bg-popover/95 px-1.5 py-1 shadow-sm"
+                    style={{
+                      top: chartMargin.top + 8,
+                      ...(flip
+                        ? { right: chartSize.width - px + 6 }
+                        : { left: px + 6 }),
+                    }}
+                  >
+                    <div className="flex items-center gap-1.5 whitespace-nowrap font-mono text-[10px] text-muted-foreground">
+                      <span>
+                        {formatTimeInZone(new Date(pinMs), tz, tz12, true)}
+                      </span>
+                      {deltaMs != null && (
+                        <span className="text-primary">
+                          Δ {deltaMs < 0 ? "−" : ""}
+                          {formatDeltaMs(deltaMs)}
+                        </span>
+                      )}
+                    </div>
+                    {pinnedValues.map((v, i) => (
+                      <div
+                        key={`${v.name}-${i}`}
+                        className="flex items-center gap-1.5 whitespace-nowrap font-mono text-[10px]"
+                      >
+                        <span
+                          className="h-1.5 w-1.5 shrink-0 rounded-full"
+                          style={{ backgroundColor: v.color }}
+                        />
+                        <span className="max-w-[140px] truncate text-muted-foreground">
+                          {v.name}
+                        </span>
+                        <span className="ml-auto text-foreground">
+                          {yAxisConfig.formatter(v.value)}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </>
               );
             })()}
 

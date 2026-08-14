@@ -17,6 +17,11 @@ import { DashboardPanel } from "@/components/dashboard/dashboard-panel";
 import { PanelRenderer } from "@/components/dashboard/panel-renderer";
 import { PanelErrorBoundary } from "@/components/dashboard/panel-error-boundary";
 import { ResizeIndicator } from "@/components/dashboard/resize-indicator";
+import {
+  METRIC_DRAG_MIME,
+  canAcceptMetric,
+  isMetricDrag,
+} from "@/lib/dashboard/metric-dnd";
 
 interface DashboardGridProps {
   config: DashboardConfig;
@@ -26,6 +31,8 @@ interface DashboardGridProps {
   selectedPanelId?: string | null;
   /** Called when user clicks empty grid background (for quick panel picker) */
   onEmptyClick?: (position: { x: number; y: number }) => void;
+  /** Signal-rail drop: append a qualified metric to a chart-family panel. */
+  onMetricDrop?: (panelId: string, qualifiedMetric: string) => void;
 }
 
 const COLS = 24;
@@ -100,6 +107,7 @@ export function DashboardGrid({
   onPanelSelect,
   selectedPanelId,
   onEmptyClick,
+  onMetricDrop,
 }: DashboardGridProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const isFirstLayoutRef = useRef(true);
@@ -116,6 +124,10 @@ export function DashboardGrid({
   }, []);
   const [resizeSize, setResizeSize] = useState<{ w: number; h: number } | null>(null);
   const [draggingId, setDraggingId] = useState<string | null>(null);
+  // Panel currently hovered by a signal-rail metric drag (drop highlight).
+  const [metricDropTargetId, setMetricDropTargetId] = useState<string | null>(
+    null,
+  );
 
   // Track container width for responsive layout
   useEffect(() => {
@@ -287,7 +299,56 @@ export function DashboardGrid({
         {config.panels.map((panel) => (
           <div
             key={panel.id}
-            className={`relative transition-shadow ${draggingId === panel.id ? "shadow-lg z-10" : ""}`}
+            className={`relative transition-shadow ${draggingId === panel.id ? "shadow-lg z-10" : ""} ${metricDropTargetId === panel.id ? "rounded-md ring-2 ring-inset ring-primary/60" : ""}`}
+            // Signal-rail metric drop target. Native HTML5 DnD only — the
+            // grid's own panel rearrange is mouse-event based (react-grid-
+            // layout via .panel-drag-handle) and never emits drag events, so
+            // these handlers cannot interfere with it. stopPropagation keeps
+            // the page-level empty-space drop zone from lighting up while a
+            // panel is hovered.
+            onDragOver={
+              onMetricDrop
+                ? (e) => {
+                    if (!isMetricDrag(e.dataTransfer)) return;
+                    e.stopPropagation();
+                    if (!canAcceptMetric(panel)) return;
+                    e.preventDefault();
+                    e.dataTransfer.dropEffect = "copy";
+                    setMetricDropTargetId((prev) =>
+                      prev === panel.id ? prev : panel.id,
+                    );
+                  }
+                : undefined
+            }
+            onDragLeave={
+              onMetricDrop
+                ? (e) => {
+                    // Ignore moves between the cell's own children.
+                    if (
+                      e.relatedTarget instanceof Node &&
+                      e.currentTarget.contains(e.relatedTarget)
+                    )
+                      return;
+                    setMetricDropTargetId((prev) =>
+                      prev === panel.id ? null : prev,
+                    );
+                  }
+                : undefined
+            }
+            onDrop={
+              onMetricDrop
+                ? (e) => {
+                    if (!isMetricDrag(e.dataTransfer)) return;
+                    e.preventDefault();
+                    e.stopPropagation();
+                    setMetricDropTargetId(null);
+                    const metric = e.dataTransfer.getData(METRIC_DRAG_MIME);
+                    if (metric && canAcceptMetric(panel)) {
+                      onMetricDrop(panel.id, metric);
+                    }
+                  }
+                : undefined
+            }
           >
             <GridCell
               panel={panel}

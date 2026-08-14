@@ -1,6 +1,14 @@
 "use client";
 
-import { useState, useEffect, useCallback, use, useRef, useMemo } from "react";
+import {
+  useState,
+  useEffect,
+  useCallback,
+  use,
+  useRef,
+  useMemo,
+  useSyncExternalStore,
+} from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { PageWrapper } from "@/components/ui/page-wrapper";
 import { Button } from "@/components/ui/button";
@@ -29,9 +37,22 @@ import type {
   DashboardVariable,
 } from "@/lib/types/dashboard";
 import { parseRelativeTime } from "@/lib/types/dashboard";
-import { isConnectionSource } from "@/lib/types/dashboard";
+import {
+  isConnectionSource,
+  DEFAULT_PANEL_CONFIG,
+  PANEL_SIZE_PRESETS,
+} from "@/lib/types/dashboard";
 import { toast } from "@/lib/toast-utils";
-import { LayoutDashboard, Check, AlertCircle, Settings } from "lucide-react";
+import { SignalRail } from "@/components/dashboard/signal-rail";
+import { METRIC_DRAG_MIME, isMetricDrag } from "@/lib/dashboard/metric-dnd";
+import { cn } from "@/lib/utils";
+import {
+  LayoutDashboard,
+  Check,
+  AlertCircle,
+  Settings,
+  PanelRight,
+} from "lucide-react";
 import Link from "next/link";
 import {
   AlertDialog,
@@ -50,6 +71,32 @@ import { CreateButton } from "@/components/ui/create-button";
 
 const EMPTY_VARIABLES: DashboardVariable[] = [];
 const EMPTY_FILTERS: DataFilter[] = [];
+
+// ── Signal-rail collapsed-state persistence ──
+// A miniature external store over localStorage so useSyncExternalStore can
+// read it without hydration mismatch (server snapshot = closed) and without
+// a setState-in-effect.
+const RAIL_STORAGE_KEY = "plexus.signal-rail.open";
+const railListeners = new Set<() => void>();
+function readRailOpen(): boolean {
+  try {
+    return localStorage.getItem(RAIL_STORAGE_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+function writeRailOpen(next: boolean) {
+  try {
+    localStorage.setItem(RAIL_STORAGE_KEY, next ? "1" : "0");
+  } catch {
+    // best-effort persistence
+  }
+  for (const l of railListeners) l();
+}
+function subscribeRailOpen(cb: () => void) {
+  railListeners.add(cb);
+  return () => railListeners.delete(cb);
+}
 
 interface DashboardPageProps {
   params: Promise<{ id: string }>;
@@ -70,6 +117,19 @@ export default function DashboardPage({ params }: DashboardPageProps) {
   const [, setEditingName] = useState(false);
   const [, setNameInput] = useState("");
   const [selectedPanelId, setSelectedPanelId] = useState<string | null>(null);
+
+  // Signal rail — collapsed state persisted per browser (localStorage-backed
+  // external store; server snapshot is "closed").
+  const railOpen = useSyncExternalStore(
+    subscribeRailOpen,
+    readRailOpen,
+    () => false,
+  );
+  const toggleRail = useCallback(() => {
+    writeRailOpen(!readRailOpen());
+  }, []);
+  // True while a signal-rail metric drag hovers empty dashboard space.
+  const [metricDragOverEmpty, setMetricDragOverEmpty] = useState(false);
 
   const [localConfig, setLocalConfig] = useState<DashboardConfig | null>(null);
   const { canEdit: roleCanEdit } = useRole();
@@ -179,6 +239,93 @@ export default function DashboardPage({ params }: DashboardPageProps) {
       setSelectedPanelId(panel.id);
     },
     [markDirty],
+  );
+
+  // ── Signal-rail composition ──
+
+  // Append a qualified metric to an existing chart panel — same local-config
+  // update + SaveBar path every other panel edit takes. Duplicate = no-op.
+  const handleAddMetricToPanel = useCallback(
+    (panelId: string, qualifiedMetric: string) => {
+      setLocalConfig((prev) => {
+        if (!prev) return prev;
+        const panel = prev.panels.find((p) => p.id === panelId);
+        if (!panel || panel.metrics.includes(qualifiedMetric)) return prev;
+        const updatedPanels = prev.panels.map((p) =>
+          p.id === panelId
+            ? { ...p, metrics: [...p.metrics, qualifiedMetric] }
+            : p,
+        );
+        const next = { ...prev, panels: updatedPanels };
+        localConfigRef.current = next;
+        markDirty();
+        return next;
+      });
+    },
+    [markDirty],
+  );
+
+  // Create a new line panel for a metric, placed in the grid's next free slot
+  // (bottom row; vertical compaction pulls it up into any gap). Goes through
+  // handleAddPanel — the same path the Add Panel modal uses.
+  const handleCreatePanelFromMetric = useCallback(
+    (qualifiedMetric: string) => {
+      const cfg = localConfigRef.current;
+      if (!cfg) return;
+      const size = PANEL_SIZE_PRESETS.medium;
+      const nextY = cfg.panels.reduce(
+        (max, p) => Math.max(max, p.layout.y + p.layout.h),
+        0,
+      );
+      const bare = qualifiedMetric.includes(":")
+        ? qualifiedMetric.split(":").slice(1).join(":")
+        : qualifiedMetric;
+      handleAddPanel({
+        id: `panel-${Date.now()}`,
+        type: "line",
+        title: bare,
+        metrics: [qualifiedMetric],
+        dataSource: { type: "realtime" },
+        config: { ...DEFAULT_PANEL_CONFIG },
+        layout: {
+          x: 0,
+          y: nextY,
+          w: size.w,
+          h: size.h,
+          minW: size.minW,
+          minH: size.minH,
+        },
+      });
+    },
+    [handleAddPanel],
+  );
+
+  // Empty-space drop zone (the padding around/below the grid): dropping a
+  // rail metric here creates a new panel. Panel cells stopPropagation their
+  // own drag events, so this only reacts between/below panels.
+  const handleEmptyDragOver = useCallback((e: React.DragEvent) => {
+    if (!isMetricDrag(e.dataTransfer)) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "copy";
+    setMetricDragOverEmpty(true);
+  }, []);
+  const handleEmptyDragLeave = useCallback((e: React.DragEvent) => {
+    if (
+      e.relatedTarget instanceof Node &&
+      e.currentTarget.contains(e.relatedTarget)
+    )
+      return;
+    setMetricDragOverEmpty(false);
+  }, []);
+  const handleEmptyDrop = useCallback(
+    (e: React.DragEvent) => {
+      if (!isMetricDrag(e.dataTransfer)) return;
+      e.preventDefault();
+      setMetricDragOverEmpty(false);
+      const metric = e.dataTransfer.getData(METRIC_DRAG_MIME);
+      if (metric) handleCreatePanelFromMetric(metric);
+    },
+    [handleCreatePanelFromMetric],
   );
 
   const handleTimeRangeChange = useCallback(
@@ -526,6 +673,19 @@ export default function DashboardPage({ params }: DashboardPageProps) {
               <Button
                 variant="ghost"
                 size="icon"
+                className={cn(
+                  "h-7 w-7",
+                  railOpen && "bg-muted text-foreground",
+                )}
+                aria-label={railOpen ? "Hide signal rail" : "Show signal rail"}
+                title="Signals"
+                onClick={toggleRail}
+              >
+                <PanelRight className="h-4 w-4" />
+              </Button>
+              <Button
+                variant="ghost"
+                size="icon"
                 className="h-7 w-7"
                 aria-label="Dashboard settings"
                 asChild
@@ -566,7 +726,15 @@ export default function DashboardPage({ params }: DashboardPageProps) {
       ) : null}
       <div className="flex">
         <div className="flex-1 flex min-h-0">
-          <div className="flex-1 p-1">
+          <div
+            className={cn(
+              "flex-1 p-1 transition-colors",
+              metricDragOverEmpty && "rounded-md bg-primary/5",
+            )}
+            onDragOver={canEdit ? handleEmptyDragOver : undefined}
+            onDragLeave={canEdit ? handleEmptyDragLeave : undefined}
+            onDrop={canEdit ? handleEmptyDrop : undefined}
+          >
             {config.panels.length === 0 ? (
               <EmptyDashboardState onAddPanel={() => setShowAddPanel(true)} />
             ) : (
@@ -576,6 +744,7 @@ export default function DashboardPage({ params }: DashboardPageProps) {
                 isEditing={canEdit}
                 onPanelSelect={canEdit ? handlePanelSelect : undefined}
                 selectedPanelId={canEdit ? selectedPanelId : null}
+                onMetricDrop={canEdit ? handleAddMetricToPanel : undefined}
               />
             )}
           </div>
@@ -595,6 +764,22 @@ export default function DashboardPage({ params }: DashboardPageProps) {
                 onUpdate={handlePanelUpdate}
                 onDelete={handlePanelDelete}
                 timeRange={config.timeRange}
+              />
+            ) : null}
+          </div>
+
+          {/* Signal rail — drag-a-metric composition */}
+          <div
+            className={`shrink-0 overflow-hidden transition-all duration-100 ease-out ${
+              canEdit && railOpen ? "w-[280px]" : "w-0"
+            }`}
+          >
+            {canEdit && railOpen ? (
+              <SignalRail
+                panels={config.panels}
+                onAddToPanel={handleAddMetricToPanel}
+                onCreatePanel={handleCreatePanelFromMetric}
+                onClose={toggleRail}
               />
             ) : null}
           </div>

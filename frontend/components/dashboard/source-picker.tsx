@@ -22,8 +22,7 @@ import {
   CollapsibleTrigger,
   CollapsibleContent,
 } from "@/components/ui/collapsible";
-import { useAvailableMetrics } from "@/hooks/use-telemetry";
-import { usePlexusRealtime } from "@/hooks/use-plexus-realtime";
+import { useMergedMetricsBySource } from "@/hooks/use-merged-metrics";
 import { useSources } from "@/hooks/use-sources";
 import { getLinkedDevicesForConnection } from "@/hooks/use-linked-devices";
 import type { DataSource, ConnectionDataSource } from "@/lib/types/dashboard";
@@ -86,14 +85,14 @@ export function SourcePicker({
   );
   const searchInputRef = useRef<HTMLInputElement>(null);
 
-  const { metricsBySource, isLoading: metricsLoading } = useAvailableMetrics();
-  const { sources: realtimeSources } = usePlexusRealtime();
+  // Shared source → metrics discovery (also feeds the signal rail).
+  const { sources: mergedMetricsBySource, isLoading: metricsLoading } =
+    useMergedMetricsBySource();
   const {
     connections,
     devices: allDevices,
     isLoading: connectionsLoading,
   } = useSources();
-  const associationsBySlug = useMemo(() => new Map<string, never[]>(), []);
 
   const isConnection = isConnectionSource(dataSource);
 
@@ -102,73 +101,6 @@ export function SourcePicker({
     if (!open) return;
     return () => setSearchQuery("");
   }, [open]);
-
-  // Merge metrics from ClickHouse/fleet with real-time sensors and cameras from online sources
-  const mergedMetricsBySource = useMemo(() => {
-    const sourceMap = new Map<
-      string,
-      {
-        source_id: string;
-        metrics: string[];
-        cameras: { camera_id: string; name?: string }[];
-        linkedTables: never[];
-        isRegistered?: boolean;
-        isOnline: boolean;
-      }
-    >();
-
-    for (const source of metricsBySource) {
-      sourceMap.set(source.source_id, {
-        source_id: source.source_id,
-        metrics: [...source.metrics],
-        cameras: [],
-        linkedTables: associationsBySlug.get(source.source_id) ?? [],
-        isRegistered: source.isRegistered,
-        isOnline: false,
-      });
-    }
-
-    for (const rtSource of realtimeSources) {
-      const sourceId = rtSource.source_id;
-      const existing = sourceMap.get(sourceId);
-      const sensorMetrics: string[] = [];
-      if (rtSource.sensors) {
-        for (const sensor of rtSource.sensors) {
-          if (sensor.available && sensor.metrics) {
-            sensorMetrics.push(...sensor.metrics);
-          }
-        }
-      }
-
-      // Collect cameras from this source
-      const cameras = (rtSource.cameras || []).map((cam) => ({
-        camera_id: cam.camera_id,
-        name: cam.name,
-      }));
-
-      if (existing) {
-        const allMetrics = new Set([...existing.metrics, ...sensorMetrics]);
-        existing.metrics = Array.from(allMetrics);
-        existing.cameras = cameras;
-        existing.isOnline = true;
-      } else {
-        sourceMap.set(sourceId, {
-          source_id: sourceId,
-          metrics: sensorMetrics,
-          cameras,
-          linkedTables: associationsBySlug.get(sourceId) ?? [],
-          isRegistered: false,
-          isOnline: true,
-        });
-      }
-    }
-
-    return Array.from(sourceMap.values()).sort((a, b) => {
-      if (a.isOnline !== b.isOnline) return a.isOnline ? -1 : 1;
-      if (a.isRegistered !== b.isRegistered) return a.isRegistered ? -1 : 1;
-      return a.source_id.localeCompare(b.source_id);
-    });
-  }, [metricsBySource, realtimeSources, associationsBySlug]);
 
   // Auto-collapse groups with no selected metrics when there are 3+ groups.
   // Fires once per source-set identity (see the ref guard — realtime ticks
@@ -216,14 +148,12 @@ export function SourcePicker({
         cameras: source.cameras.filter((c) =>
           (c.name || c.camera_id).toLowerCase().includes(q),
         ),
-        linkedTables: [] as never[],
       }))
       .filter(
         (source) =>
           source.source_id.toLowerCase().includes(q) ||
           source.metrics.length > 0 ||
-          source.cameras.length > 0 ||
-          source.linkedTables.length > 0,
+          source.cameras.length > 0,
       );
   }, [mergedMetricsBySource, searchQuery]);
 
