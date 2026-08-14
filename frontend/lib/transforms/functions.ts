@@ -73,21 +73,36 @@ export function rate(points: TransformPoint[]): TransformPoint[] {
 }
 
 /**
- * Ratio — divide values of metric A by metric B, point-by-point.
- * Assumes both arrays are sorted by timestamp and of equal length.
+ * Ratio — divide values of metric A by metric B, aligned by timestamp.
+ *
+ * For each numerator point, the denominator is the nearest point by
+ * timestamp within the alignment tolerance (same semantics as `combine`).
+ * Points with no denominator match are dropped — never divide misaligned
+ * values. Zero denominators are skipped (matches prior behavior).
+ *
+ * Assumes both arrays are sorted by timestamp (as delivered by the query
+ * layer). Identical timestamp grids take an index-pairing fast path.
  */
 export function ratio(
   pointsA: TransformPoint[],
   pointsB: TransformPoint[],
 ): TransformPoint[] {
   const result: TransformPoint[] = [];
-  const len = Math.min(pointsA.length, pointsB.length);
+  if (pointsA.length === 0 || pointsB.length === 0) return result;
 
-  for (let i = 0; i < len; i++) {
-    if (pointsB[i].value === 0) continue;
+  // Fast path: identical grids need no nearest-neighbor search.
+  const sameGrid =
+    pointsA.length === pointsB.length &&
+    pointsA.every((p, i) => p.timestamp === pointsB[i].timestamp);
+
+  for (let i = 0; i < pointsA.length; i++) {
+    const denom = sameGrid
+      ? pointsB[i].value
+      : findNearest(pointsB, new Date(pointsA[i].timestamp).getTime());
+    if (denom === null || denom === 0) continue;
     result.push({
       timestamp: pointsA[i].timestamp,
-      value: pointsA[i].value / pointsB[i].value,
+      value: pointsA[i].value / denom,
     });
   }
 
@@ -150,7 +165,17 @@ export function combine(
 ): { metric: string; points: TransformPoint[] } | null {
   // Extract variable names from formula (sequences of letters/underscores/digits not starting with digit)
   const varPattern = /[a-zA-Z_][a-zA-Z0-9_]*/g;
-  const mathFunctions = new Set(["abs", "min", "max", "sqrt", "pow", "log", "ceil", "floor", "round"]);
+  const mathFunctions = new Set([
+    "abs",
+    "min",
+    "max",
+    "sqrt",
+    "pow",
+    "log",
+    "ceil",
+    "floor",
+    "round",
+  ]);
   const rawVars = formula.match(varPattern) || [];
   const varNames = [...new Set(rawVars.filter((v) => !mathFunctions.has(v)))];
 
@@ -166,7 +191,9 @@ export function combine(
       continue;
     }
     const suffixMatch = Object.keys(allData).find(
-      (k) => k.endsWith(`:${varName}`) || k.toLowerCase().endsWith(`:${varName.toLowerCase()}`),
+      (k) =>
+        k.endsWith(`:${varName}`) ||
+        k.toLowerCase().endsWith(`:${varName.toLowerCase()}`),
     );
     if (suffixMatch) {
       varToKey[varName] = suffixMatch;
@@ -225,7 +252,10 @@ export function combine(
       // Replace variable names with their values (longest first to avoid partial replacement)
       const sortedVars = [...varNames].sort((a, b) => b.length - a.length);
       for (const varName of sortedVars) {
-        expr = expr.replace(new RegExp(`\\b${varName}\\b`, "g"), String(values[varName]));
+        expr = expr.replace(
+          new RegExp(`\\b${varName}\\b`, "g"),
+          String(values[varName]),
+        );
       }
 
       const fn = new Function(`return (${expr})`);
@@ -243,7 +273,10 @@ export function combine(
 }
 
 /** Find the nearest point by timestamp */
-function findNearest(points: TransformPoint[], targetMs: number): number | null {
+function findNearest(
+  points: TransformPoint[],
+  targetMs: number,
+): number | null {
   if (points.length === 0) return null;
 
   let best = 0;

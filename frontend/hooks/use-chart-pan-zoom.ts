@@ -11,6 +11,13 @@ interface UseChartPanZoomOptions {
   setViewWindow: (window: ViewWindow | null) => void;
   /** Commits the final range — triggers data re-fetch (called on mouseup / debounce) */
   onTimeRangeChange: (start: number, end: number) => void;
+  /**
+   * Restores the pre-zoom committed range on reset (double-click / Escape).
+   * Receives the TimeRange that was committed before the first gesture, so a
+   * relative range ("last 15m") goes back to being live. When omitted, reset
+   * falls back to committing that range's bounds via onTimeRangeChange.
+   */
+  onTimeRangeReset?: (range: TimeRange) => void;
   /** Called when a pan gesture begins — use to clear tooltips, etc. */
   onPanStart?: () => void;
   margin: { left: number; right: number };
@@ -21,7 +28,37 @@ const MIN_RANGE = 10 * 1000;
 const MAX_RANGE = 90 * 24 * 60 * 60 * 1000;
 
 /**
+ * True when `range` is the absolute range this hook itself committed —
+ * i.e. a timeRange prop change that is just our own zoom/pan echoing back,
+ * not the user picking a new range externally.
+ *
+ * Exported for unit tests only.
+ */
+export function isOwnCommit(
+  range: TimeRange,
+  commit: { start: number; end: number } | null,
+): boolean {
+  if (!commit || range.type !== "absolute") return false;
+  const [startStr, endStr] = range.value.split("/");
+  const start = new Date(startStr).getTime();
+  const end = endStr ? new Date(endStr).getTime() : NaN;
+  if (!Number.isFinite(start) || !Number.isFinite(end)) return false;
+  // ISO round-trip is millisecond-exact, but allow 1s slack for callers
+  // that re-derive the bounds.
+  return Math.abs(start - commit.start) <= 1000 && Math.abs(end - commit.end) <= 1000;
+}
+
+/**
  * Adds wheel-to-zoom and drag-to-pan on the chart time axis.
+ *
+ * Gestures (PlotJuggler-style tool idiom):
+ * - Bare wheel over the plot = time zoom centered on the cursor (page scroll
+ *   is intentionally suppressed while over the plot). Ctrl/Cmd+wheel — which
+ *   is also what trackpad pinch emits — zooms the same way.
+ * - Plain drag = pan (Ctrl/Cmd+drag still pans as before).
+ * - Shift+drag = X time-brush zoom.
+ * - Double-click or Escape (while hovering) = reset to the pre-zoom
+ *   committed range.
  *
  * Uses viewWindow for instant 60fps visual feedback during interaction,
  * only commits the final range (triggering data fetch) on completion.
@@ -35,6 +72,7 @@ export function useChartPanZoom({
   enabled = true,
   setViewWindow,
   onTimeRangeChange,
+  onTimeRangeReset,
   onPanStart,
   margin,
 }: UseChartPanZoomOptions) {
@@ -47,6 +85,11 @@ export function useChartPanZoom({
   const zoomTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const brushStart = useRef<{ clientX: number; time: number } | null>(null);
   const [brushRect, setBrushRect] = useState<{ left: number; width: number } | null>(null);
+  // The committed TimeRange before the first zoom/pan/brush gesture — what
+  // double-click / Escape resets to. Cleared when the user picks a new range
+  // externally (a timeRange change that isn't our own commit echoing back).
+  const baselineRange = useRef<TimeRange | null>(null);
+  const lastCommit = useRef<{ start: number; end: number } | null>(null);
 
   // Store latest values in refs so event handlers always read current state
   // without causing the effect to re-run and churn listeners.
@@ -55,14 +98,28 @@ export function useChartPanZoom({
   const marginRef = useRef(margin);
   const setViewWindowRef = useRef(setViewWindow);
   const onTimeRangeChangeRef = useRef(onTimeRangeChange);
+  const onTimeRangeResetRef = useRef(onTimeRangeReset);
   const onPanStartRef = useRef(onPanStart);
+  const timeRangeKey = `${timeRange.type}:${timeRange.value}`;
+  const prevTimeRangeKey = useRef(timeRangeKey);
   useEffect(() => {
     activeRef.current = active;
     timeRangeRef.current = timeRange;
     marginRef.current = margin;
     setViewWindowRef.current = setViewWindow;
     onTimeRangeChangeRef.current = onTimeRangeChange;
+    onTimeRangeResetRef.current = onTimeRangeReset;
     onPanStartRef.current = onPanStart;
+    // Detect external time-range changes (picker, Go Live, scrubber): they
+    // invalidate the reset baseline. Our own commits echo back as the exact
+    // absolute range we sent and keep the baseline alive.
+    if (prevTimeRangeKey.current !== timeRangeKey) {
+      prevTimeRangeKey.current = timeRangeKey;
+      if (!isOwnCommit(timeRange, lastCommit.current)) {
+        baselineRange.current = null;
+        lastCommit.current = null;
+      }
+    }
   });
 
   // Sync the ref to state so the listener effect re-runs when the element mounts.
@@ -86,10 +143,54 @@ export function useChartPanZoom({
   useEffect(() => {
     if (!el) return;
 
+    // Remember the committed range the first gesture starts from, so reset
+    // can restore it after any number of chained zooms/pans/brushes.
+    const captureBaseline = () => {
+      if (baselineRange.current === null) {
+        baselineRange.current = timeRangeRef.current;
+      }
+    };
+
+    const commitRange = (start: number, end: number) => {
+      lastCommit.current = { start, end };
+      onTimeRangeChangeRef.current(start, end);
+    };
+
+    // Reset to the pre-zoom committed range (double-click / Escape).
+    const resetZoom = () => {
+      if (zoomTimer.current) {
+        clearTimeout(zoomTimer.current);
+        zoomTimer.current = null;
+      }
+      pendingZoom.current = null;
+      brushStart.current = null;
+      setBrushRect(null);
+      isPanning.current = false;
+      panStartRange.current = null;
+      pointerDownId.current = null;
+      el.style.cursor = "";
+      setViewWindowRef.current(null);
+
+      const baseline = baselineRange.current;
+      if (!baseline) return; // nothing zoomed — just cleared the preview
+      baselineRange.current = null;
+      lastCommit.current = null;
+
+      if (onTimeRangeResetRef.current) {
+        onTimeRangeResetRef.current(baseline);
+      } else {
+        const { start, end } = getTimeRangeBounds(baseline);
+        commitRange(start.getTime(), end.getTime());
+      }
+    };
+
     const handleWheel = (e: WheelEvent) => {
       if (!activeRef.current) return;
-      if (!e.ctrlKey && !e.metaKey) return;
+      // Bare wheel zooms (tool idiom); preventDefault keeps the page from
+      // scrolling while over the plot. Ctrl/Cmd+wheel (incl. trackpad pinch)
+      // takes the same path.
       e.preventDefault();
+      captureBaseline();
 
       const rect = el.getBoundingClientRect();
       const m = marginRef.current;
@@ -123,7 +224,7 @@ export function useChartPanZoom({
       zoomTimer.current = setTimeout(() => {
         const z = pendingZoom.current;
         if (z) {
-          onTimeRangeChangeRef.current(z.start, z.end);
+          commitRange(z.start, z.end);
           pendingZoom.current = null;
         }
         zoomTimer.current = null;
@@ -142,6 +243,7 @@ export function useChartPanZoom({
         const x = Math.max(0, Math.min(chartWidth, e.clientX - rect.left - m.left));
         const { start, end } = getCurrentBounds();
         const time = start + (x / chartWidth) * (end - start);
+        captureBaseline();
         brushStart.current = { clientX: e.clientX, time };
         pointerDownId.current = e.pointerId;
         el.setPointerCapture(e.pointerId);
@@ -150,8 +252,10 @@ export function useChartPanZoom({
         return;
       }
 
-      if (!e.ctrlKey && !e.metaKey) return;
-
+      // Plain drag pans (tool idiom); Ctrl/Cmd+drag keeps working the same.
+      // A click without movement never pans (DRAG_THRESHOLD in pointermove),
+      // so child click targets (alert bands, annotations) are unaffected.
+      captureBaseline();
       panStartX.current = e.clientX;
       panStartRange.current = { ...getCurrentBounds() };
       pointerDownId.current = e.pointerId;
@@ -213,7 +317,7 @@ export function useChartPanZoom({
         const endTime = start + (curX / chartWidth) * (end - start);
         const [s, en] = startTime < endTime ? [startTime, endTime] : [endTime, startTime];
         const range = Math.max(MIN_RANGE, Math.min(MAX_RANGE, en - s));
-        onTimeRangeChangeRef.current(s, s + range);
+        commitRange(s, s + range);
         return;
       }
       if (!panStartRange.current) return;
@@ -231,7 +335,7 @@ export function useChartPanZoom({
           const deltaX = e.clientX - panStartX.current;
           const deltaMs = -(deltaX / chartWidth) * rangeMs;
 
-          onTimeRangeChangeRef.current(start + deltaMs, end + deltaMs);
+          commitRange(start + deltaMs, end + deltaMs);
         }
       }
 
@@ -240,16 +344,35 @@ export function useChartPanZoom({
       pointerDownId.current = null;
     };
 
+    const handleDoubleClick = (e: MouseEvent) => {
+      if (!activeRef.current) return;
+      e.preventDefault();
+      resetZoom();
+    };
+
+    // Escape resets too, but only while the cursor is over this chart —
+    // and never when the user is mid-Escape out of something else.
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key !== "Escape" || e.defaultPrevented) return;
+      if (!activeRef.current) return;
+      if (!el.matches(":hover")) return;
+      resetZoom();
+    };
+
     el.addEventListener("wheel", handleWheel, { passive: false });
     el.addEventListener("pointerdown", handlePointerDown);
     el.addEventListener("pointermove", handlePointerMove);
     el.addEventListener("pointerup", handlePointerUp);
+    el.addEventListener("dblclick", handleDoubleClick);
+    window.addEventListener("keydown", handleKeyDown);
 
     return () => {
       el.removeEventListener("wheel", handleWheel);
       el.removeEventListener("pointerdown", handlePointerDown);
       el.removeEventListener("pointermove", handlePointerMove);
       el.removeEventListener("pointerup", handlePointerUp);
+      el.removeEventListener("dblclick", handleDoubleClick);
+      window.removeEventListener("keydown", handleKeyDown);
       if (zoomTimer.current) clearTimeout(zoomTimer.current);
     };
   }, [el, getCurrentBounds]);

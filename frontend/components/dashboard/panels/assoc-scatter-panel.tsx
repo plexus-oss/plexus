@@ -68,11 +68,29 @@ function Glyph({
   };
   switch (shape) {
     case "diamond":
-      return <polygon points={`${cx},${cy - r} ${cx + r},${cy} ${cx},${cy + r} ${cx - r},${cy}`} {...common} />;
+      return (
+        <polygon
+          points={`${cx},${cy - r} ${cx + r},${cy} ${cx},${cy + r} ${cx - r},${cy}`}
+          {...common}
+        />
+      );
     case "square":
-      return <rect x={cx - r * 0.9} y={cy - r * 0.9} width={r * 1.8} height={r * 1.8} {...common} />;
+      return (
+        <rect
+          x={cx - r * 0.9}
+          y={cy - r * 0.9}
+          width={r * 1.8}
+          height={r * 1.8}
+          {...common}
+        />
+      );
     case "triangle":
-      return <polygon points={`${cx},${cy - r} ${cx + r},${cy + r * 0.85} ${cx - r},${cy + r * 0.85}`} {...common} />;
+      return (
+        <polygon
+          points={`${cx},${cy - r} ${cx + r},${cy + r * 0.85} ${cx - r},${cy + r * 0.85}`}
+          {...common}
+        />
+      );
     default:
       return <circle cx={cx} cy={cy} r={r} {...common} />;
   }
@@ -85,7 +103,10 @@ interface Hover {
   category: AssocCategory | undefined;
 }
 
-export function AssocScatterPanel({ panel, timeRange }: AssocScatterPanelProps) {
+export function AssocScatterPanel({
+  panel,
+  timeRange,
+}: AssocScatterPanelProps) {
   const { settings } = useUserSettings();
   const tz = settings.timezone;
   const tz12 = settings.use12HourFormat;
@@ -108,7 +129,8 @@ export function AssocScatterPanel({ panel, timeRange }: AssocScatterPanelProps) 
     setSize({ width: r.width, height: r.height });
     const obs = new ResizeObserver((entries) => {
       const e = entries[0];
-      if (e) setSize({ width: e.contentRect.width, height: e.contentRect.height });
+      if (e)
+        setSize({ width: e.contentRect.width, height: e.contentRect.height });
     });
     obs.observe(node);
     observerRef.current = obs;
@@ -124,14 +146,22 @@ export function AssocScatterPanel({ panel, timeRange }: AssocScatterPanelProps) 
       ? (panel.dataSource as ConnectionDataSource)
       : undefined;
   const cols = useMemo(() => {
-    const detected = connectionMeta ? autoDetectColumns(connectionMeta.columns) : {};
+    const detected = connectionMeta
+      ? autoDetectColumns(connectionMeta.columns)
+      : {};
     return {
       // X is time: prefer the dataSource's timeColumn (also drives time-filtering).
       timeColumn: conn?.timeColumn ?? cfg.timeColumn ?? detected.timeColumn,
       yColumn: cfg.yColumn ?? detected.yColumn,
       categoryColumn: cfg.categoryColumn ?? detected.categoryColumn,
     };
-  }, [conn?.timeColumn, cfg.timeColumn, cfg.yColumn, cfg.categoryColumn, connectionMeta]);
+  }, [
+    conn?.timeColumn,
+    cfg.timeColumn,
+    cfg.yColumn,
+    cfg.categoryColumn,
+    connectionMeta,
+  ]);
 
   const realPoints = useMemo(
     () => (connectionMeta ? rowsToPoints(connectionMeta.rows, cols) : []),
@@ -158,8 +188,7 @@ export function AssocScatterPanel({ panel, timeRange }: AssocScatterPanelProps) 
   } else if (!viewWindow && frozenPoints !== null) {
     setFrozenPoints(null);
   }
-  const livePoints =
-    viewWindow && frozenPoints ? frozenPoints : realPoints;
+  const livePoints = viewWindow && frozenPoints ? frozenPoints : realPoints;
 
   const latestDataTime = useMemo(() => {
     let max = 0;
@@ -186,7 +215,10 @@ export function AssocScatterPanel({ panel, timeRange }: AssocScatterPanelProps) 
 
   // ── Legend categories ──
   const categories = useMemo(() => {
-    if (isSample) return cfg.assocCategories?.length ? cfg.assocCategories : SAMPLE_CATEGORIES;
+    if (isSample)
+      return cfg.assocCategories?.length
+        ? cfg.assocCategories
+        : SAMPLE_CATEGORIES;
     const present = Array.from(new Set(points.map((p) => p.category)));
     return resolveCategories(cfg.assocCategories, present);
   }, [isSample, cfg.assocCategories, points]);
@@ -232,8 +264,11 @@ export function AssocScatterPanel({ panel, timeRange }: AssocScatterPanelProps) 
     [lanes, innerH],
   );
 
-  // ── Pan / zoom (cmd+scroll zoom, drag pan) + brush — shared hook ──
-  const panMargin = useMemo(() => ({ left: MARGIN.left, right: MARGIN.right }), []);
+  // ── Pan / zoom (wheel zoom, drag pan, dbl-click/Esc reset) + brush — shared hook ──
+  const panMargin = useMemo(
+    () => ({ left: MARGIN.left, right: MARGIN.right }),
+    [],
+  );
   const handlePanZoomChange = useCallback(
     (start: number, end: number) => {
       contextTimeRangeChange({
@@ -252,6 +287,9 @@ export function AssocScatterPanel({ panel, timeRange }: AssocScatterPanelProps) 
     timeRange,
     setViewWindow,
     onTimeRangeChange: handlePanZoomChange,
+    // Double-click / Escape restores the pre-zoom TimeRange directly, so a
+    // relative range ("last 15m") goes back to being live after zooming.
+    onTimeRangeReset: contextTimeRangeChange,
     onPanStart: handlePanStart,
     margin: panMargin,
   });
@@ -266,7 +304,10 @@ export function AssocScatterPanel({ panel, timeRange }: AssocScatterPanelProps) 
     const showSeconds = rangeMs <= 15 * 60 * 1000;
     return Array.from({ length: count + 1 }, (_, i) => {
       const ms = s + (i / count) * rangeMs;
-      return { ms, label: formatTimeInZone(new Date(ms), tz, tz12, showSeconds) };
+      return {
+        ms,
+        label: formatTimeInZone(new Date(ms), tz, tz12, showSeconds),
+      };
     });
   }, [xDomain, innerW, tz, tz12]);
 
@@ -280,8 +321,12 @@ export function AssocScatterPanel({ panel, timeRange }: AssocScatterPanelProps) 
     if (!rect) return;
     const iw = rect.width - MARGIN.left - MARGIN.right;
     if (iw <= 0) return;
-    const x = Math.max(MARGIN.left, Math.min(e.clientX - rect.left, rect.width - MARGIN.right));
-    const absMs = xDomain[0] + ((x - MARGIN.left) / iw) * (xDomain[1] - xDomain[0]);
+    const x = Math.max(
+      MARGIN.left,
+      Math.min(e.clientX - rect.left, rect.width - MARGIN.right),
+    );
+    const absMs =
+      xDomain[0] + ((x - MARGIN.left) / iw) * (xDomain[1] - xDomain[0]);
     setHoveredTimestamp(new Date(absMs).toISOString());
   };
   const handleMouseLeave = useCallback(() => {
@@ -316,8 +361,12 @@ export function AssocScatterPanel({ panel, timeRange }: AssocScatterPanelProps) 
     hoveredTimestamp && xDomain && innerW > 0
       ? (() => {
           const ms = new Date(hoveredTimestamp).getTime();
-          const px = MARGIN.left + ((ms - xDomain[0]) / (xDomain[1] - xDomain[0] || 1)) * innerW;
-          return px >= MARGIN.left && px <= size.width - MARGIN.right ? px : null;
+          const px =
+            MARGIN.left +
+            ((ms - xDomain[0]) / (xDomain[1] - xDomain[0] || 1)) * innerW;
+          return px >= MARGIN.left && px <= size.width - MARGIN.right
+            ? px
+            : null;
         })()
       : null;
 
@@ -432,7 +481,9 @@ export function AssocScatterPanel({ panel, timeRange }: AssocScatterPanelProps) 
               return (
                 <g
                   key={idx}
-                  onMouseEnter={() => setHover({ px: cx, py: cy, point: p, category: style })}
+                  onMouseEnter={() =>
+                    setHover({ px: cx, py: cy, point: p, category: style })
+                  }
                   onMouseLeave={() => setHover(null)}
                   style={{ cursor: "pointer" }}
                 >
@@ -454,7 +505,12 @@ export function AssocScatterPanel({ panel, timeRange }: AssocScatterPanelProps) 
         {brushRect && innerH > 0 && (
           <div
             className="absolute pointer-events-none z-10 bg-primary/15 border-x-2 border-primary"
-            style={{ left: brushRect.left, top: MARGIN.top, width: brushRect.width, height: innerH }}
+            style={{
+              left: brushRect.left,
+              top: MARGIN.top,
+              width: brushRect.width,
+              height: innerH,
+            }}
           />
         )}
 
@@ -462,17 +518,22 @@ export function AssocScatterPanel({ panel, timeRange }: AssocScatterPanelProps) 
         {hover && xDomain && (
           <div
             className="pointer-events-none absolute z-20 rounded-md border border-border bg-popover px-2.5 py-1.5 text-[11px] shadow-md"
-            style={{ left: Math.min(hover.px + 10, size.width - 170), top: Math.max(hover.py - 10, 4) }}
+            style={{
+              left: Math.min(hover.px + 10, size.width - 170),
+              top: Math.max(hover.py - 10, 4),
+            }}
           >
             <div className="flex items-center gap-1.5 font-medium text-popover-foreground">
               <span
                 className="inline-block h-2 w-2 rounded-full"
-                style={{ background: resolveColor(hover.category?.color ?? "#6b7280") }}
+                style={{
+                  background: resolveColor(hover.category?.color ?? "#6b7280"),
+                }}
               />
               {hover.category?.label ?? (hover.point.category || "—")}
             </div>
             <div className="mt-0.5 text-muted-foreground tabular-nums">
-              {(cols.yColumn ?? "id")}: {hover.point.y}
+              {cols.yColumn ?? "id"}: {hover.point.y}
             </div>
             <div className="text-muted-foreground tabular-nums">
               {formatTimeInZone(new Date(hover.point.x), tz, tz12, true)}
@@ -492,9 +553,19 @@ export function AssocScatterPanel({ panel, timeRange }: AssocScatterPanelProps) 
       {showLegend && categories.length > 0 && (
         <div className="shrink-0 flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-border/40 px-3 py-1.5">
           {categories.map((c) => (
-            <span key={c.value} className="inline-flex items-center gap-1.5 text-[11px] text-muted-foreground">
+            <span
+              key={c.value}
+              className="inline-flex items-center gap-1.5 text-[11px] text-muted-foreground"
+            >
               <svg width={14} height={14} className="overflow-visible">
-                <Glyph shape={c.shape} cx={7} cy={7} color={resolveColor(c.color)} filled={c.filled} r={4.5} />
+                <Glyph
+                  shape={c.shape}
+                  cx={7}
+                  cy={7}
+                  color={resolveColor(c.color)}
+                  filled={c.filled}
+                  r={4.5}
+                />
               </svg>
               {c.label}
             </span>

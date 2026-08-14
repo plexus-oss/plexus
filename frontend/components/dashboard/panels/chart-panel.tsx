@@ -406,8 +406,7 @@ export function ChartPanel({
       ticks.map(yAxisConfig.formatter),
       Y_TICK_FONT,
     );
-    let left =
-      Math.ceil(labelWidth) + 10 + (panel.config.yAxisLabel ? 24 : 8);
+    let left = Math.ceil(labelWidth) + 10 + (panel.config.yAxisLabel ? 24 : 8);
     left = Math.ceil(left / 8) * 8;
     const cap =
       chartSize.width > 0 ? Math.floor(chartSize.width * 0.4) : Infinity;
@@ -424,6 +423,9 @@ export function ChartPanel({
     enabled: ann.mode !== "on",
     setViewWindow,
     onTimeRangeChange: handlePanZoomChange,
+    // Double-click / Escape restores the pre-zoom TimeRange directly, so a
+    // relative range ("last 15m") goes back to being live after zooming.
+    onTimeRangeReset: contextTimeRangeChange,
     onPanStart: handlePanStart,
     margin: chartMargin,
   });
@@ -489,7 +491,8 @@ export function ChartPanel({
     // Open alerts extend at most to the last observed data point: a silent
     // source can never "clear" a condition, so an unclosed alert would
     // otherwise stay visible in every window from trigger to now, forever.
-    const openEnd = latestDataTime != null ? Math.min(now, latestDataTime) : now;
+    const openEnd =
+      latestDataTime != null ? Math.min(now, latestDataTime) : now;
     return alertsForSource.filter((a) => {
       if (alertMetricSet.size > 0 && !alertMetricSet.has(a.metric))
         return false;
@@ -502,7 +505,14 @@ export function ChartPanel({
       if (!a.closed_at && end <= start) return false;
       return end >= domStart && start <= domEnd;
     });
-  }, [showAlerts, xDomain, alertsForSource, alertMetricSet, now, latestDataTime]);
+  }, [
+    showAlerts,
+    xDomain,
+    alertsForSource,
+    alertMetricSet,
+    now,
+    latestDataTime,
+  ]);
 
   const handleAlertClick = useCallback(
     (alertId: string) => {
