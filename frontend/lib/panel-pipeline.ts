@@ -15,8 +15,9 @@ import type {
   AggregationFunction,
   TimeBucket,
   DataFilter,
+  TimeRange,
 } from "@/lib/types/dashboard";
-import { isNumericFilter } from "@/lib/types/dashboard";
+import { isNumericFilter, parseRelativeTime } from "@/lib/types/dashboard";
 import {
   applyTransforms,
   type TransformPoint,
@@ -165,6 +166,117 @@ export function filterTelemetryData(
     result[metric] = matching.length > 0 ? filterPoints(points as DataPoint[], matching) : points;
   }
   return result;
+}
+
+// =============================================================================
+// TIME-WINDOW CLIP
+// =============================================================================
+
+/**
+ * The resolved clip window usePanelData applies to panel data before the
+ * pipeline runs. ISO bounds are pre-formatted so per-point comparison is a
+ * plain string compare (timestamps are ISO-8601); the second-quantized
+ * buckets exist for cache keying (points must not flap in/out of the window
+ * every render as the clock advances by a few ms).
+ */
+export interface ClipWindow {
+  /** Lower bound, quantized to whole seconds (cache key). */
+  startBucket: number;
+  /** Upper bound, quantized to whole seconds (cache key). */
+  endBucket: number;
+  startIso: string;
+  endIso: string;
+  /** Absolute ranges honor both bounds; relative ranges only the lower. */
+  enforceUpper: boolean;
+}
+
+/** Newest point timestamp (ms) across all series, or null when there is no
+ *  data. Series are time-ordered, so only each array's last element is read. */
+function latestTimestampMs(data: TelemetryData | null | undefined): number | null {
+  if (!data) return null;
+  let latest = 0;
+  for (const points of Object.values(data)) {
+    if (!Array.isArray(points) || points.length === 0) continue;
+    const last = points[points.length - 1] as { timestamp?: string };
+    if (!last?.timestamp) continue;
+    const ts = Date.parse(last.timestamp);
+    if (Number.isFinite(ts) && ts > latest) latest = ts;
+  }
+  return latest > 0 ? latest : null;
+}
+
+/**
+ * Resolve the time window panel data is clipped to before rendering.
+ *
+ * Absolute ranges are a closed interval the user picked on purpose — both
+ * bounds are enforced exactly as given (an omitted end means "until now").
+ *
+ * Relative ("live") ranges MUST be anchored the same way the rendered x-domain
+ * is (use-chart-domain): to the NEWEST DATA TIMESTAMP, not the wall clock.
+ * The live domain parks at [latest − range, latest]; deriving the clip from
+ * `Date.now() − range` instead means that whenever the data lags the wall
+ * clock (an imported flight log, a source that went quiet), the clip erodes
+ * the series from the left *inside* a domain that isn't moving — on screen the
+ * chart collapses into a thin full-height stripe at the last-data x, then goes
+ * blank once the lag exceeds the range, even though every point still sits
+ * inside the rendered domain. Anchoring to the data keeps clip and domain in
+ * agreement: the last `range` of data stays exactly as drawn, and for a truly
+ * live stream (latest ≈ now) behavior is unchanged. Falls back to the wall
+ * clock only when there is no data to anchor to.
+ */
+export function resolveClipWindow(
+  timeRange: TimeRange,
+  data: TelemetryData | null | undefined,
+  nowMs: number = Date.now(),
+): ClipWindow {
+  let startMs: number;
+  let endMs: number;
+  let enforceUpper: boolean;
+  if (timeRange.type === "absolute") {
+    const [startStr, endStr] = timeRange.value.split("/");
+    startMs = Date.parse(startStr);
+    endMs = endStr ? Date.parse(endStr) : nowMs;
+    enforceUpper = true;
+  } else {
+    const rangeMs = parseRelativeTime(timeRange.value);
+    const anchor = latestTimestampMs(data) ?? nowMs;
+    startMs = anchor - rangeMs;
+    endMs = Math.max(anchor, nowMs);
+    enforceUpper = false;
+  }
+  const startBucket = Math.floor(startMs / 1000);
+  const endBucket = Math.floor(endMs / 1000);
+  return {
+    startBucket,
+    endBucket,
+    startIso: new Date(startBucket * 1000).toISOString(),
+    endIso: new Date(endBucket * 1000).toISOString(),
+    enforceUpper,
+  };
+}
+
+/**
+ * Clip one time-ordered series to a resolved window. Fast path: when every
+ * point is already inside, the input array is returned by reference so
+ * downstream memos keep their identity.
+ */
+export function clipPointsToWindow<P extends { timestamp?: string }>(
+  points: P[],
+  window: ClipWindow,
+): P[] {
+  const first = points[0];
+  const last = points[points.length - 1];
+  const allIn =
+    points.length === 0 ||
+    ((!first?.timestamp || first.timestamp >= window.startIso) &&
+      (!window.enforceUpper || !last?.timestamp || last.timestamp <= window.endIso));
+  if (allIn) return points;
+  return points.filter((p) => {
+    if (!p.timestamp) return true;
+    if (p.timestamp < window.startIso) return false;
+    if (window.enforceUpper && p.timestamp > window.endIso) return false;
+    return true;
+  });
 }
 
 // =============================================================================

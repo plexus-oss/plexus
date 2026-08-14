@@ -431,6 +431,41 @@ describe("sliceSeriesToWindow", () => {
     expect(out[1]).toBe(data[1]);
   });
 
+  it("returns input unchanged for NaN window bounds (never drops data)", () => {
+    const data = series([0, 10, 20, 30]);
+    expect(sliceSeriesToWindow(data, NaN, 100)).toBe(data);
+    expect(sliceSeriesToWindow(data, 0, NaN)).toBe(data);
+    expect(sliceSeriesToWindow(data, NaN, NaN)).toBe(data);
+  });
+
+  it("never yields fewer than 2 points when ≥2 points lie inside the window", () => {
+    // The rendered-domain invariant: whatever the window's alignment to the
+    // data, every in-window point must survive the slice.
+    const data = series(Array.from({ length: 901 }, (_, i) => i * 200)); // 3min @5Hz
+    const last = data[data.length - 1].x;
+    for (const [start, end] of [
+      [last - 60_000, last + 900] as const, // live-style: tail window
+      [last - 60_000, last + 60_000] as const, // window extends past the data
+      [-60_000, 30_000] as const, // window starts before the data
+      [100, 500] as const, // deep zoom inside the data
+    ]) {
+      const out = sliceSeriesToWindow(data, start, end);
+      const inWindow = data.filter((p) => p.x >= start && p.x <= end);
+      expect(out.length).toBeGreaterThanOrEqual(Math.max(inWindow.length, 2));
+      for (const p of inWindow) expect(out).toContain(p);
+    }
+  });
+
+  it("keeps the tail plus one boundary interpolant when only the tail overlaps", () => {
+    const data = series([0, 100, 200, 300, 400, 500]);
+    const out = sliceSeriesToWindow(data, 450, 900, 0);
+    expect(out).toEqual([
+      { x: 450, y: 450 }, // edge-clamped crossing into the window
+      { x: 500, y: 500 }, // real tail sample, by reference
+    ]);
+    expect(out[1]).toBe(data[5]);
+  });
+
   it("handles duplicate timestamps at the boundary without NaN", () => {
     const data: EnvelopePoint[] = [
       { x: 100, y: 1 },

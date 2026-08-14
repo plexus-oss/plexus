@@ -15,7 +15,6 @@ import {
   useContext,
   useEffect,
   useMemo,
-  useRef,
   useState,
 } from "react";
 import { type TelemetryData } from "@/components/dashboard/telemetry-provider";
@@ -27,14 +26,18 @@ import {
 import { useMonitors } from "@/hooks/use-monitors";
 import type { UnifiedLimit } from "@/lib/limits";
 import { useChartValidation } from "@/hooks/use-chart-validation";
-import { getTimeRangeBounds, type Panel, type TimeRange } from "@/lib/types/dashboard";
+import { type Panel, type TimeRange } from "@/lib/types/dashboard";
 import {
   useDashboardFilters,
   useDashboardVariables,
 } from "@/components/dashboard/dashboard-state-context";
 import type { ChartType } from "@/lib/validation/chart-schemas";
 import type { ValidationResult } from "@/lib/validation/types";
-import { runPanelPipeline } from "@/lib/panel-pipeline";
+import {
+  clipPointsToWindow,
+  resolveClipWindow,
+  runPanelPipeline,
+} from "@/lib/panel-pipeline";
 import { useRegisterPanelTimestamps } from "@/hooks/use-register-panel-timestamps";
 import {
   getPanelDataSource,
@@ -387,26 +390,28 @@ export function usePanelData({
   // Reference-stability matters here: every WS tick produces a fresh `data`
   // object, so we cache per-metric filtered arrays keyed on (input array ref,
   // cutoff bucket). For relative ranges we quantize the cutoff to 1s so most
-  // ticks share a cache key and downstream memos don't re-run.
-  const windowCacheRef = useRef(
-    new Map<string, { input: unknown; startBucket: number; endBucket: number; output: unknown }>(),
+  // ticks share a cache key and downstream memos don't re-run. The cache map
+  // is held in state (lazy init) so the same instance persists across renders
+  // without reading a ref during render — same pattern as useChartSeries's
+  // conversion cache.
+  const [windowCache] = useState(
+    () =>
+      new Map<
+        string,
+        { input: unknown; startBucket: number; endBucket: number; output: unknown }
+      >(),
   );
   const windowedData = useMemo<TelemetryData>(() => {
     if (!timeRange || !data) return data;
-    const { start, end } = getTimeRangeBounds(timeRange);
-    const enforceUpper = timeRange.type === "absolute";
-    // Quantize to 1s so points don't flap in/out of the window every render
-    // when `Date.now()` advances by a few ms. For absolute ranges the bounds
-    // are already fixed so quantization is a no-op.
-    const startBucket = Math.floor(start.getTime() / 1000);
-    const endBucket = Math.floor(end.getTime() / 1000);
-    const startIso = new Date(startBucket * 1000).toISOString();
-    const endIso = new Date(endBucket * 1000).toISOString();
-    const cache = windowCacheRef.current;
-    const nextCache = new Map<
-      string,
-      { input: unknown; startBucket: number; endBucket: number; output: unknown }
-    >();
+    // Bounds resolution lives in lib/panel-pipeline (pure, unit-tested).
+    // Relative ranges anchor to the newest data timestamp — the same anchor
+    // the rendered x-domain uses — so the clip can never erode points the
+    // domain is still displaying (see resolveClipWindow). Quantized to 1s so
+    // points don't flap in/out of the window every render when the anchor
+    // advances by a few ms.
+    const clipWindow = resolveClipWindow(timeRange, data);
+    const { startBucket, endBucket } = clipWindow;
+    const cache = windowCache;
     const out: TelemetryData = {};
     for (const [key, points] of Object.entries(data)) {
       if (!Array.isArray(points)) continue;
@@ -418,37 +423,28 @@ export function usePanelData({
         cached.endBucket === endBucket
       ) {
         out[key] = cached.output as typeof points;
-        nextCache.set(key, cached);
         continue;
       }
-      // Fast path: if the first point is already inside the window and the
-      // last point is inside the upper bound, the whole array passes. Return
-      // the input array verbatim to preserve reference equality.
-      const first = points[0];
-      const last = points[points.length - 1];
-      const allIn =
-        points.length === 0 ||
-        ((!first?.timestamp || first.timestamp >= startIso) &&
-          (!enforceUpper || !last?.timestamp || last.timestamp <= endIso));
-      const filtered = allIn
-        ? points
-        : points.filter((p) => {
-            if (!p.timestamp) return true;
-            if (p.timestamp < startIso) return false;
-            if (enforceUpper && p.timestamp > endIso) return false;
-            return true;
-          });
+      // clipPointsToWindow fast-paths the all-inside case by returning the
+      // input array verbatim, preserving reference equality.
+      const filtered = clipPointsToWindow(points, clipWindow);
       out[key] = filtered;
-      nextCache.set(key, {
+      cache.set(key, {
         input: points,
         startBucket,
         endBucket,
         output: filtered,
       });
     }
-    windowCacheRef.current = nextCache;
+    // Drop cache entries for metrics no longer present so the map doesn't
+    // grow unbounded across the session.
+    if (cache.size > Object.keys(out).length) {
+      for (const key of cache.keys()) {
+        if (!(key in out)) cache.delete(key);
+      }
+    }
     return out;
-  }, [data, timeRange]);
+  }, [data, timeRange, windowCache]);
 
   const filteredData = useMemo(
     () =>
