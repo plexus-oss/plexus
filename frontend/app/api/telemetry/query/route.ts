@@ -91,15 +91,24 @@ export const GET = withDualAuth(
       source_id?: string | null;
     };
     type ResultType = Record<string, PointType[]>;
-    const cached = getCached<{ data: ResultType; resolution: ResolutionLevel }>(
-      cacheKey,
-    );
+    const cached = getCached<{
+      data: ResultType;
+      resolution: ResolutionLevel;
+      truncated: boolean;
+    }>(cacheKey);
     if (cached) {
       return cachedJson(cached, { maxAge: 5, staleWhileRevalidate: 10 });
     }
 
     const result: ResultType = {};
+    // One resolution describes the whole response; with the density-aware
+    // raw tier, metrics sharing a window can now come back mixed (sparse →
+    // raw, dense → downsampled). Report the non-raw tier whenever any
+    // series was bucketed so the client is never told "raw" for data that
+    // isn't. `truncated` mirrors AdaptiveQueryResult.truncated (set only
+    // when a series is STILL row-capped after tier selection).
     let resolution: ResolutionLevel = "raw";
+    let truncated = false;
     for (const key of effectiveKeys) result[key] = [];
 
     const queryPromises: Promise<void>[] = [];
@@ -115,7 +124,10 @@ export const GET = withDualAuth(
             endTime,
             limit,
           );
-          resolution = adaptiveResult.resolution;
+          if (adaptiveResult.resolution !== "raw") {
+            resolution = adaptiveResult.resolution;
+          }
+          if (adaptiveResult.truncated) truncated = true;
           const key = sourceId === "*" ? metric : `${sourceId}:${metric}`;
           if (!result[key]) result[key] = [];
           for (const point of adaptiveResult.points) {
@@ -136,7 +148,7 @@ export const GET = withDualAuth(
 
     await Promise.all(queryPromises);
 
-    const responseData = { data: result, resolution };
+    const responseData = { data: result, resolution, truncated };
     setCached(cacheKey, responseData, getTtlForTimeRange(timeRange));
     return cachedJson(responseData, { maxAge: 5, staleWhileRevalidate: 10 });
 });

@@ -2,7 +2,7 @@
  * POST /api/telemetry/batch-query — Batch multiple telemetry queries into one request.
  *
  * Accepts { queries: [{ id, metrics, timeRange, sourceId? }] }
- * Returns  { results: { [id]: { data: Record<metric, points[]>, resolution } } }
+ * Returns  { results: { [id]: { data: Record<metric, points[]>, resolution, truncated? } } }
  *
  * Uses adaptive query to auto-select resolution based on time range.
  */
@@ -22,7 +22,10 @@ export const POST = withDualAuth(
 
   // sum/count = per-bucket totals of raw events, for tier-independent client aggregation (see AdaptivePoint)
   type PointRow = { timestamp: string; value: number; min?: number; max?: number; sum?: number; count?: number; source_id?: string | null };
-  const results: Record<string, { data: Record<string, PointRow[]>; resolution: ResolutionLevel }> = {};
+  // truncated mirrors AdaptiveQueryResult.truncated: true only when a series
+  // is STILL row-capped after density-aware tier selection (bucket fallback
+  // failed) — never silently truncate.
+  const results: Record<string, { data: Record<string, PointRow[]>; resolution: ResolutionLevel; truncated?: boolean }> = {};
 
   // Deduplicate: group by (timeRange, sourceId?) → set of metrics
   type GroupKey = string;
@@ -69,7 +72,7 @@ export const POST = withDualAuth(
       });
       if (allMetrics.length === 0) return; // nothing accessible; leave [] results
       const cacheKey = buildCacheKey(orgId, allMetrics, group.timeRange, group.sourceId);
-      type CachedData = { data: Record<string, PointRow[]>; resolution: ResolutionLevel };
+      type CachedData = { data: Record<string, PointRow[]>; resolution: ResolutionLevel; truncated: boolean };
       let cached = getCached<CachedData>(cacheKey);
 
       if (!cached) {
@@ -77,7 +80,11 @@ export const POST = withDualAuth(
           group.timeRange,
         );
         const data: Record<string, PointRow[]> = {};
+        // Non-raw wins: with the density-aware raw tier, one group's metrics
+        // can come back mixed (sparse → raw, dense → downsampled) — never
+        // report "raw" for a response containing bucketed series.
         let resolution: ResolutionLevel = "raw";
+        let truncated = false;
 
         // Parse source:metric pairs and query each metric adaptively
         const metricPromises = allMetrics.map(async (m) => {
@@ -94,7 +101,8 @@ export const POST = withDualAuth(
             10000,
           );
 
-          resolution = result.resolution;
+          if (result.resolution !== "raw") resolution = result.resolution;
+          if (result.truncated) truncated = true;
           data[m] = result.points.map((p) => ({
             timestamp: p.timestamp,
             value: p.value,
@@ -107,7 +115,7 @@ export const POST = withDualAuth(
         });
 
         await Promise.all(metricPromises);
-        cached = { data, resolution };
+        cached = { data, resolution, truncated };
         setCached(cacheKey, cached, getTtlForTimeRange(group.timeRange));
       }
 
@@ -115,6 +123,7 @@ export const POST = withDualAuth(
       for (const qId of group.queryIds) {
         const qDef = queries.find((q) => q.id === qId)!;
         results[qId].resolution = cached.resolution;
+        if (cached.truncated) results[qId].truncated = true;
         for (const m of qDef.metrics) {
           results[qId].data[m] = cached.data[m] || [];
         }

@@ -13,6 +13,7 @@
 
 import "server-only";
 import { HOUR_MS } from "@/lib/constants/time";
+import { decideRawTier } from "@/lib/db/adaptive-tier";
 
 import { createClient, ClickHouseClient } from "@clickhouse/client";
 import https from "node:https";
@@ -1315,11 +1316,107 @@ function chNumber(v: number | string): number {
 export interface AdaptiveQueryResult {
   points: AdaptivePoint[];
   resolution: ResolutionLevel;
+  /**
+   * True only when the response is still row-capped after tier selection —
+   * i.e. the dense-series bucket fallback itself failed and the capped raw
+   * slice (newest rows) was served as a last resort. Callers must surface
+   * this rather than silently truncating (same convention as the
+   * connection-query `truncated` flag).
+   */
+  truncated?: boolean;
+}
+
+/** Raw telemetry rows → AdaptivePoints (sum=value, count=1 — see AdaptivePoint). */
+function toRawPoints(rows: TelemetryRow[]): AdaptivePoint[] {
+  return rows.map((r) => ({
+    timestamp: fromClickHouseDateTime(r.timestamp),
+    value: r.value,
+    sum: r.value,
+    count: 1,
+  }));
+}
+
+/**
+ * Query-time downsample with a millisecond-granular bucket. Mirrors the
+ * 1h–6h tier's toStartOfInterval query, but takes the interval in ms so
+ * sub-second buckets work — the dense raw-tier fallback buckets a 70s
+ * window at ~35ms. `INTERVAL n MILLISECOND` over the DateTime64(3)
+ * timestamp column returns DateTime64 bucket starts (supported well before
+ * the pinned server version, 26.3), which fromClickHouseDateTime already
+ * formats with their fractional seconds intact.
+ *
+ * `sourceId` may be empty (the "*" unscoped form) — the condition is
+ * dropped then, matching queryTelemetry's raw-tier wildcard semantics.
+ * Throws on query failure; callers own the fallback.
+ */
+async function queryTelemetryTimeBucketedMs(
+  orgId: string,
+  sourceId: string,
+  metric: string,
+  startTime: Date,
+  endTime: Date,
+  intervalMs: number,
+): Promise<AdaptivePoint[]> {
+  const client = getClient(orgId);
+  // Integer-sanitize: interpolated into the SQL text (INTERVAL arguments
+  // can't be bound parameters), so never let a non-integer through.
+  const interval = Math.max(1, Math.round(intervalMs));
+
+  const result = await client.query({
+    query: `
+      SELECT
+        toStartOfInterval(timestamp, INTERVAL ${interval} MILLISECOND) AS ts,
+        avg(value) AS avg_value,
+        min(value) AS min_value,
+        max(value) AS max_value,
+        sum(value) AS bucket_sum,
+        count() AS cnt
+      FROM telemetry
+      WHERE org_id = {orgId:String}
+        ${sourceId ? "AND source_id = {sourceId:String}" : ""}
+        AND metric = {metric:String}
+        AND timestamp >= {startTime:DateTime64(3, 'UTC')}
+        AND timestamp <= {endTime:DateTime64(3, 'UTC')}
+      GROUP BY ts
+      ORDER BY ts ASC
+    `,
+    query_params: {
+      orgId,
+      ...(sourceId && { sourceId }),
+      metric,
+      startTime: toClickHouseDateTime(startTime),
+      endTime: toClickHouseDateTime(endTime),
+    },
+    format: "JSONEachRow",
+  });
+
+  const rows = (await result.json()) as Array<{
+    ts: string;
+    avg_value: number | string;
+    min_value: number | string;
+    max_value: number | string;
+    bucket_sum: number | string;
+    cnt: number | string;
+  }>;
+
+  return rows.map((r) => ({
+    timestamp: fromClickHouseDateTime(r.ts),
+    value: chNumber(r.avg_value),
+    min: chNumber(r.min_value),
+    max: chNumber(r.max_value),
+    sum: chNumber(r.bucket_sum),
+    count: chNumber(r.cnt),
+  }));
 }
 
 /**
  * Auto-selects resolution based on time range:
- *   ≤ 1h        → raw telemetry
+ *   ≤ 1h        → raw telemetry — unless the window holds more rows than
+ *                 `limit` (probed via LIMIT limit+1), in which case it falls
+ *                 back to a query-time downsample at a span-derived,
+ *                 sub-second-capable bucket (~2000 buckets, min 10ms) so
+ *                 dense series (250Hz ULog imports) keep their full span
+ *                 instead of being capped to the newest rows
  *   > 1h, ≤ 6h  → query-time downsample (GROUP BY toStartOfInterval)
  *   > 6h, ≤ 24h → telemetry_1m (1-minute rollup)
  *   > 24h       → telemetry_hourly (hourly rollup)
@@ -1338,7 +1435,15 @@ export async function queryTelemetryAdaptive(
   const SIX_HOURS = 6 * ONE_HOUR;
   const TWENTY_FOUR_HOURS = 24 * ONE_HOUR;
 
-  // ≤ 1h → raw
+  // ≤ 1h → raw, gated by DENSITY, not span alone. Probe one row past the
+  // budget: at or under budget the probe's rows ARE the raw result
+  // (byte-identical to the pre-probe path — 1Hz fleet data is untouched).
+  // Over budget, the window holds more rows than the response may carry;
+  // the old behavior served the newest `limit` rows (DESC inside the cap),
+  // silently amputating the series' oldest span — a 250Hz ULog import over
+  // 70s (~17k rows) rendered a band shorter than the axis. Instead, fall
+  // back to the query-time bucket tier at a span-derived (sub-second
+  // capable) interval so the full window survives.
   if (timeRangeMs <= ONE_HOUR) {
     const rows = await queryTelemetry({
       orgId,
@@ -1346,18 +1451,42 @@ export async function queryTelemetryAdaptive(
       metric,
       startTime,
       endTime,
-      limit,
+      limit: limit + 1,
     });
 
-    return {
-      resolution: "raw",
-      points: rows.map((r) => ({
-        timestamp: fromClickHouseDateTime(r.timestamp),
-        value: r.value,
-        sum: r.value,
-        count: 1,
-      })),
-    };
+    const decision = decideRawTier(rows.length, limit, timeRangeMs);
+    if (decision.tier === "raw") {
+      return {
+        resolution: "raw",
+        points: toRawPoints(rows),
+      };
+    }
+
+    try {
+      const points = await queryTelemetryTimeBucketedMs(
+        orgId,
+        sourceId,
+        metric,
+        startTime,
+        endTime,
+        decision.intervalMs,
+      );
+      return { resolution: "downsampled", points };
+    } catch (error) {
+      console.error(
+        "[ClickHouse] Dense raw-tier bucket fallback error:",
+        error,
+      );
+      // Last resort: the capped raw slice the old path served (probe rows
+      // are ascending with the newest limit+1 kept — drop the oldest so
+      // exactly `limit` newest remain). Flagged so callers never present
+      // it as complete.
+      return {
+        resolution: "raw",
+        truncated: true,
+        points: toRawPoints(rows.slice(rows.length - limit)),
+      };
+    }
   }
 
   // > 1h, ≤ 6h → query-time downsample
@@ -1436,12 +1565,7 @@ export async function queryTelemetryAdaptive(
       });
       return {
         resolution: "raw",
-        points: rows.map((r) => ({
-          timestamp: fromClickHouseDateTime(r.timestamp),
-          value: r.value,
-          sum: r.value,
-          count: 1,
-        })),
+        points: toRawPoints(rows),
       };
     }
   }
