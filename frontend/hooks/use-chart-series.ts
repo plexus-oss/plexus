@@ -1,6 +1,11 @@
 import { useEffect, useMemo, useState } from "react";
 import type { TelemetryData, TelemetryPoint } from "@/components/dashboard/telemetry-provider";
-import { expandBucketEnvelope, m4Decimate } from "@/lib/data-utils";
+import {
+	envelopeGapCeilingMs,
+	expandBucketEnvelope,
+	m4Decimate,
+	sliceSeriesToWindow,
+} from "@/lib/data-utils";
 import { formatTimeInZone } from "@/lib/timezone";
 
 /**
@@ -126,6 +131,16 @@ interface UseChartSeriesOptions {
 	chartType: string;
 	showFutureDashing: boolean;
 	chartWidth: number;
+	/**
+	 * The x-window (ms) the chart is actually displaying — the transient
+	 * pan/zoom window while a gesture is in flight, else the committed absolute
+	 * range. Series are sliced to it BEFORE envelope expansion and decimation,
+	 * so deep zoom gets window-relative decimation (raw fidelity once few
+	 * points remain) and offscreen points never blow past Float32 pixel
+	 * precision in the GPU path. Null/undefined (live relative ranges,
+	 * metric-vs-metric axes) skips windowing.
+	 */
+	xWindow?: [number, number] | null;
 	tz: string;
 	tz12: boolean;
 	/** How bar charts reduce sub-buckets past MAX_BARS. Counts must sum —
@@ -140,6 +155,15 @@ interface UseChartSeriesResult {
 	/** Final series passed to chart — bar charts have string x values */
 	// eslint-disable-next-line @typescript-eslint/no-explicit-any
 	activeSeries: any[];
+	/**
+	 * True when the underlying data has any points at all, BEFORE windowing.
+	 * Loading/empty panel states must key on this — a deep-zoom window that
+	 * happens to sit between samples empties timeSeries, and unmounting the
+	 * chart for it would kill the gesture handlers mid-interaction.
+	 */
+	hasData: boolean;
+	/** Newest data timestamp across series, before windowing (live anchor). */
+	latestDataTime?: number;
 }
 
 /**
@@ -156,6 +180,7 @@ export function useChartSeries({
 	chartType,
 	showFutureDashing,
 	chartWidth,
+	xWindow,
 	tz,
 	tz12,
 	barAggregate = "avg",
@@ -250,6 +275,29 @@ export function useChartSeries({
 		conversionCache,
 	]);
 
+	// ── Window: slice to the visible x-domain before envelope/decimation ──
+	// During a transient wheel zoom the committed data can span a window many
+	// thousand times wider than the visible one (2h of buckets under a 10ms
+	// window). Slicing here (a) makes the decimation below window-relative —
+	// once few points remain visible they pass through at raw fidelity instead
+	// of collapsing into one M4 column — and (b) keeps every pixel coordinate
+	// the GPU sees small; unwindowed offscreen points map to coordinates far
+	// beyond Float32 precision and render as jumping/garbage lines. Segments
+	// crossing the window edge are clamped by exact f64 interpolation, so a
+	// window that falls between two samples still draws the connecting line.
+	const windowedSeries = useMemo(() => {
+		if (!xWindow || xAxisField) return baseSeries;
+		const [start, end] = xWindow;
+		let changed = false;
+		const mapped = baseSeries.map((s) => {
+			const sliced = sliceSeriesToWindow(s.data as XyPoint[], start, end);
+			if (sliced === s.data) return s;
+			changed = true;
+			return { ...s, data: sliced as XyPoint[] };
+		});
+		return changed ? mapped : baseSeries;
+	}, [baseSeries, xWindow, xAxisField]);
+
 	// ── Bucket envelope: draw rollup min/max, not just the average ──
 	// Aggregated tiers (downsampled/1m/1h) deliver one avg point per bucket;
 	// plotting only the avg erases every spike inside the bucket. Expand each
@@ -258,17 +306,28 @@ export function useChartSeries({
 	// the bucket's true vertical extent — the same envelope M4 preserves on raw
 	// data. Line/area only: bar bucketing re-aggregates y values (sum would
 	// triple-count) and scatter would draw the extremes as fake samples.
+	// Gated per point by on-screen bucket width: once the viewer zooms in far
+	// enough that one bucket spans many pixels, the ±δ offsets would paint a
+	// fake zigzag of intra-bucket structure the server never reported.
 	const envelopeSeries = useMemo(() => {
-		if (chartType !== "line" && chartType !== "area") return baseSeries;
+		if (chartType !== "line" && chartType !== "area") return windowedSeries;
 		let changed = false;
-		const mapped = baseSeries.map((s) => {
-			const expanded = expandBucketEnvelope(s.data);
+		const mapped = windowedSeries.map((s) => {
+			const spanMs = xWindow
+				? xWindow[1] - xWindow[0]
+				: s.data.length > 1
+					? s.data[s.data.length - 1].x - s.data[0].x
+					: 0;
+			const expanded = expandBucketEnvelope(
+				s.data,
+				envelopeGapCeilingMs(spanMs, chartWidth),
+			);
 			if (expanded === s.data) return s;
 			changed = true;
 			return { ...s, data: expanded };
 		});
-		return changed ? mapped : baseSeries;
-	}, [baseSeries, chartType]);
+		return changed ? mapped : windowedSeries;
+	}, [windowedSeries, chartType, xWindow, chartWidth]);
 
 	// Wall-clock "now" for the past/future split, refreshed each second while
 	// future-dashing is on. Sampling via state keeps Date.now() out of render.
@@ -377,5 +436,24 @@ export function useChartSeries({
 		});
 	}, [chartType, decimatedSeries, tz, tz12, barAggregate]);
 
-	return { timeSeries: decimatedSeries, activeSeries: finalSeries };
+	// Pre-window facts for panel-level states: whether any data exists at all,
+	// and the newest timestamp (live-mode viewport anchor + alert band extents).
+	// Both deliberately ignore windowing — a deep-zoom window between samples
+	// must not read as "no data".
+	const hasData = baseSeries.some((s) => s.data.length > 0);
+	const latestDataTime = useMemo(() => {
+		let max = 0;
+		for (const s of baseSeries) {
+			const last = s.data[s.data.length - 1];
+			if (last && last.x > max) max = last.x;
+		}
+		return max || undefined;
+	}, [baseSeries]);
+
+	return {
+		timeSeries: decimatedSeries,
+		activeSeries: finalSeries,
+		hasData,
+		latestDataTime,
+	};
 }

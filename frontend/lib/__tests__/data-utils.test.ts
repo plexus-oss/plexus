@@ -1,8 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
   downsampleLTTB,
+  envelopeGapCeilingMs,
   expandBucketEnvelope,
   m4Decimate,
+  MAX_ENVELOPE_GAP_PX,
+  sliceSeriesToWindow,
   type DataPoint,
   type EnvelopePoint,
 } from "@/lib/data-utils";
@@ -264,5 +267,180 @@ describe("expandBucketEnvelope", () => {
     const expanded = expandBucketEnvelope(buckets);
     const out = m4Decimate(expanded, 150);
     expect(out.some((p) => p.y === 800)).toBe(true);
+  });
+
+  it("suppresses expansion entirely when every gap exceeds maxGapMs", () => {
+    // Deep zoom: 3.6s buckets under a 10s window — each bucket spans hundreds
+    // of pixels, so the ±δ triplets would draw fake intra-bucket structure.
+    const buckets: EnvelopePoint[] = Array.from({ length: 4 }, (_, i) => ({
+      x: i * 3_600,
+      y: 5,
+      min: 1,
+      max: 9,
+    }));
+    const out = expandBucketEnvelope(buckets, 1_000);
+    // Identity preserved — no-op copies would churn downstream memos.
+    expect(out).toBe(buckets);
+  });
+
+  it("gates per point: only buckets within maxGapMs expand", () => {
+    const buckets: EnvelopePoint[] = [
+      { x: 0, y: 5, min: 1, max: 9 },
+      { x: 100, y: 5, min: 1, max: 9 },
+      { x: 10_000, y: 5, min: 1, max: 9 }, // isolated — gap 9900 > gate
+    ];
+    const out = expandBucketEnvelope(buckets, 500);
+    // First two expand (gap 100), the isolated one stays a bare average.
+    expect(out).toEqual([
+      { x: -25, y: 1 },
+      { x: 0, y: 5 },
+      { x: 25, y: 9 },
+      { x: 75, y: 1 },
+      { x: 100, y: 5 },
+      { x: 125, y: 9 },
+      { x: 10_000, y: 5 },
+    ]);
+  });
+
+  it("default maxGapMs (Infinity) matches ungated behavior", () => {
+    const buckets: EnvelopePoint[] = [
+      { x: 0, y: 5, min: 1, max: 9 },
+      { x: 100, y: 6, min: 2, max: 10 },
+    ];
+    expect(expandBucketEnvelope(buckets)).toEqual(
+      expandBucketEnvelope(buckets, Infinity),
+    );
+  });
+});
+
+describe("envelopeGapCeilingMs", () => {
+  it("returns Infinity when span or width is unknown", () => {
+    expect(envelopeGapCeilingMs(0, 800)).toBe(Infinity);
+    expect(envelopeGapCeilingMs(60_000, 0)).toBe(Infinity);
+    expect(envelopeGapCeilingMs(-5, -5)).toBe(Infinity);
+  });
+
+  it("scales as ms-per-pixel × MAX_ENVELOPE_GAP_PX", () => {
+    // 2h over 800px → 9s/px → ceiling 9s × MAX px.
+    const spanMs = 2 * 3_600_000;
+    expect(envelopeGapCeilingMs(spanMs, 800)).toBeCloseTo(
+      (spanMs / 800) * MAX_ENVELOPE_GAP_PX,
+    );
+  });
+
+  it("keeps 1h rollups under a 7d window expandable (~5px buckets)", () => {
+    const ceiling = envelopeGapCeilingMs(7 * 86_400_000, 800);
+    expect(ceiling).toBeGreaterThan(3_600_000);
+  });
+
+  it("gates 3.6s buckets once zoomed to a 10s window", () => {
+    const ceiling = envelopeGapCeilingMs(10_000, 800);
+    expect(ceiling).toBeLessThan(3_600);
+  });
+});
+
+describe("sliceSeriesToWindow", () => {
+  const series = (xs: number[], y = (x: number) => x): EnvelopePoint[] =>
+    xs.map((x) => ({ x, y: y(x) }));
+
+  it("returns the same reference when nothing needs trimming", () => {
+    const data = series([0, 10, 20, 30]);
+    expect(sliceSeriesToWindow(data, -5, 40)).toBe(data);
+    // Points within pad slack also count as untrimmed.
+    expect(sliceSeriesToWindow(data, 0, 30)).toBe(data);
+    const empty: EnvelopePoint[] = [];
+    expect(sliceSeriesToWindow(empty, 0, 10)).toBe(empty);
+  });
+
+  it("returns input unchanged for degenerate windows (end ≤ start)", () => {
+    const data = series([0, 10, 20]);
+    expect(sliceSeriesToWindow(data, 10, 10)).toBe(data);
+    expect(sliceSeriesToWindow(data, 20, 10)).toBe(data);
+  });
+
+  it("keeps in-window points by reference and clamps edge segments", () => {
+    const data = series([0, 100, 200, 300, 400, 500]);
+    const out = sliceSeriesToWindow(data, 150, 350, 0);
+    // Interpolated boundary at 150, raw 200/300 by reference, boundary at 350.
+    expect(out).toEqual([
+      { x: 150, y: 150 },
+      { x: 200, y: 200 },
+      { x: 300, y: 300 },
+      { x: 350, y: 350 },
+    ]);
+    expect(out[1]).toBe(data[2]);
+    expect(out[2]).toBe(data[3]);
+  });
+
+  it("interpolates boundary crossings at the padded edge in f64", () => {
+    // y jumps 0 → 1000 across the window edge; the clamp must sit exactly on
+    // the segment, not at the offscreen neighbor.
+    const data: EnvelopePoint[] = [
+      { x: 0, y: 0 },
+      { x: 1_000, y: 1_000 },
+    ];
+    const out = sliceSeriesToWindow(data, 400, 600, 0.05);
+    // pad = 10 → edges at 390 / 610, linearly interpolated y = x here.
+    expect(out).toEqual([
+      { x: 390, y: 390 },
+      { x: 610, y: 610 },
+    ]);
+  });
+
+  it("draws the crossing segment when the window falls between samples", () => {
+    // The deep-zoom case: a 10ms window between 3.6s-spaced buckets must
+    // still render the honest connecting line, not a blank chart.
+    const t = 1_755_000_000_000; // epoch-ms scale, where f32 would fail
+    const data: EnvelopePoint[] = [
+      { x: t, y: 10 },
+      { x: t + 3_600, y: 20 },
+    ];
+    const out = sliceSeriesToWindow(data, t + 1_000, t + 1_000 + 10);
+    expect(out.length).toBe(2);
+    const [p0, p1] = out;
+    expect(p0.x).toBeCloseTo(t + 999.5);
+    expect(p1.x).toBeCloseTo(t + 1_010.5);
+    // y interpolated on the segment (slope 10/3600 per ms).
+    expect(p0.y).toBeCloseTo(10 + (999.5 / 3_600) * 10);
+    expect(p1.y).toBeCloseTo(10 + (1_010.5 / 3_600) * 10);
+    // All retained coordinates stay within ~one pad of the window.
+    for (const p of out) {
+      expect(p.x).toBeGreaterThanOrEqual(t + 1_000 - 10);
+      expect(p.x).toBeLessThanOrEqual(t + 1_010 + 10);
+    }
+  });
+
+  it("returns empty when the window is wholly outside the data", () => {
+    const data = series([100, 200, 300]);
+    expect(sliceSeriesToWindow(data, 0, 50)).toEqual([]);
+    expect(sliceSeriesToWindow(data, 400, 500)).toEqual([]);
+  });
+
+  it("preserves min/max envelope fields on retained points", () => {
+    const data: EnvelopePoint[] = [
+      { x: 0, y: 5, min: 1, max: 9 },
+      { x: 100, y: 6, min: 2, max: 10 },
+      { x: 200, y: 7, min: 3, max: 11 },
+    ];
+    const out = sliceSeriesToWindow(data, 90, 110, 0);
+    expect(out).toEqual([
+      { x: 90, y: expect.closeTo(5.9, 5) },
+      { x: 100, y: 6, min: 2, max: 10 },
+      { x: 110, y: expect.closeTo(6.1, 5) },
+    ]);
+    expect(out[1]).toBe(data[1]);
+  });
+
+  it("handles duplicate timestamps at the boundary without NaN", () => {
+    const data: EnvelopePoint[] = [
+      { x: 100, y: 1 },
+      { x: 100, y: 5 },
+      { x: 500, y: 9 },
+    ];
+    const out = sliceSeriesToWindow(data, 300, 400, 0);
+    for (const p of out) {
+      expect(Number.isFinite(p.x)).toBe(true);
+      expect(Number.isFinite(p.y)).toBe(true);
+    }
   });
 });

@@ -112,8 +112,18 @@ export function m4Decimate(data: DataPoint[], columns: number): DataPoint[] {
  * before avg before max. Points without spread (raw tier, realtime, constant
  * buckets) pass through unchanged; inputs with no spread anywhere return the
  * same array reference.
+ *
+ * `maxGapMs` gates the expansion per point: when the bucket gap exceeds it,
+ * the point passes through as its plain average. The envelope is only honest
+ * while a whole bucket collapses into (roughly) one pixel column — once the
+ * viewer zooms in far enough that a single bucket spans many pixels, the ±δ
+ * offsets would draw a fake zigzag of structure the server never reported.
+ * Callers derive the ceiling from the visible span via envelopeGapCeilingMs.
  */
-export function expandBucketEnvelope(points: EnvelopePoint[]): DataPoint[] {
+export function expandBucketEnvelope(
+  points: EnvelopePoint[],
+  maxGapMs: number = Infinity,
+): DataPoint[] {
   const n = points.length;
   // A single point has no bucket-width context to place min/max against.
   if (n < 2) return points;
@@ -132,6 +142,7 @@ export function expandBucketEnvelope(points: EnvelopePoint[]): DataPoint[] {
   if (!hasSpread) return points;
 
   const result: DataPoint[] = [];
+  let expandedAny = false;
   for (let i = 0; i < n; i++) {
     const p = points[i];
     const gapPrev = i > 0 ? p.x - points[i - 1].x : Infinity;
@@ -139,15 +150,125 @@ export function expandBucketEnvelope(points: EnvelopePoint[]): DataPoint[] {
     let gap = Math.min(gapPrev, gapNext);
     if (!Number.isFinite(gap) || gap <= 0) gap = 0;
     const delta = gap / 4;
+    const withinGate = delta > 0 && gap <= maxGapMs;
 
-    const hasMin = p.min !== undefined && p.min < p.y && delta > 0;
-    const hasMax = p.max !== undefined && p.max > p.y && delta > 0;
+    const hasMin = p.min !== undefined && p.min < p.y && withinGate;
+    const hasMax = p.max !== undefined && p.max > p.y && withinGate;
+    if (hasMin || hasMax) expandedAny = true;
 
     if (hasMin) result.push({ x: p.x - delta, y: p.min! });
     result.push({ x: p.x, y: p.y });
     if (hasMax) result.push({ x: p.x + delta, y: p.max! });
   }
-  return result;
+  // The gate suppressed every expansion — keep the input's identity so
+  // downstream memos don't churn on a no-op copy.
+  return expandedAny ? result : points;
+}
+
+/**
+ * How many pixels a rollup bucket may span on screen before its envelope
+ * expansion stops (see expandBucketEnvelope). Below this a bucket is ~a pixel
+ * column and the min→avg→max triplet honestly paints its vertical extent; a
+ * 7d window over 1h rollups (~5px/bucket) stays under it. Above it each
+ * bucket is individually resolvable and the ±δ offsets would read as fake
+ * intra-bucket oscillation.
+ */
+export const MAX_ENVELOPE_GAP_PX = 12;
+
+/**
+ * Largest bucket gap (ms) whose envelope expansion is still honest for a
+ * given visible span and chart width. Infinity (no gate) when either is
+ * unknown — matching pre-gate behavior.
+ */
+export function envelopeGapCeilingMs(
+  visibleSpanMs: number,
+  chartWidthPx: number,
+): number {
+  if (!(visibleSpanMs > 0) || !(chartWidthPx > 0)) return Infinity;
+  return (visibleSpanMs / chartWidthPx) * MAX_ENVELOPE_GAP_PX;
+}
+
+/**
+ * Fraction of the window span kept as slack beyond each edge by
+ * sliceSeriesToWindow, so edge segments stay continuous and smoothing has a
+ * neighbor to lean on without reintroducing huge offscreen coordinates.
+ */
+export const WINDOW_PAD_FRACTION = 0.05;
+
+/**
+ * Slice a time-ordered series to the points relevant to a visible x-window.
+ *
+ * Deep zoom can put the visible window many-thousand-fold inside the data's
+ * span (2h of buckets under a 10ms window during a transient wheel zoom).
+ * Rendering the full series then breaks two ways: the M4 point budget is
+ * spent on offscreen columns (the window collapses into one column → a giant
+ * step), and offscreen points map to pixel coordinates so large that the
+ * GPU's Float32 vertex math loses whole pixels of precision (jumping/garbage
+ * lines). This keeps only points inside [start − pad, end + pad] and, where a
+ * segment crosses a pad edge, replaces the offscreen neighbor with the exact
+ * f64-interpolated crossing at that edge — every retained coordinate stays
+ * within ~5% of the window, and a window that falls between two samples still
+ * draws the honest connecting segment.
+ *
+ * Returns the input array by reference when nothing needs trimming (the
+ * common non-zoomed case), so memo identities are preserved. A window wholly
+ * outside the data returns an empty array (nothing is visible, and there is
+ * no crossing segment).
+ */
+export function sliceSeriesToWindow<P extends EnvelopePoint>(
+  points: P[],
+  start: number,
+  end: number,
+  padFraction: number = WINDOW_PAD_FRACTION,
+): EnvelopePoint[] {
+  const n = points.length;
+  if (n === 0 || !(end > start)) return points;
+
+  const pad = (end - start) * padFraction;
+  const lo = start - pad;
+  const hi = end + pad;
+  if (points[0].x >= lo && points[n - 1].x <= hi) return points;
+
+  // lower bound: first index with x >= lo
+  let a = 0;
+  let b = n;
+  while (a < b) {
+    const m = (a + b) >> 1;
+    if (points[m].x < lo) a = m + 1;
+    else b = m;
+  }
+  const firstIn = a;
+  // last index with x <= hi
+  let c = 0;
+  let d = n;
+  while (c < d) {
+    const m = (c + d) >> 1;
+    if (points[m].x <= hi) c = m + 1;
+    else d = m;
+  }
+  const lastIn = c - 1;
+
+  const interp = (p0: DataPoint, p1: DataPoint, x: number): DataPoint => {
+    const dx = p1.x - p0.x;
+    const t = dx > 0 ? (x - p0.x) / dx : 0;
+    return { x, y: p0.y + (p1.y - p0.y) * t };
+  };
+
+  // Window entirely before the first point or after the last one.
+  if (firstIn >= n || lastIn < 0) return [];
+
+  // No point inside, but one segment spans the whole window — clamp both ends.
+  if (firstIn > lastIn) {
+    const p0 = points[firstIn - 1];
+    const p1 = points[firstIn];
+    return [interp(p0, p1, lo), interp(p0, p1, hi)];
+  }
+
+  const out: EnvelopePoint[] = [];
+  if (firstIn > 0) out.push(interp(points[firstIn - 1], points[firstIn], lo));
+  for (let i = firstIn; i <= lastIn; i++) out.push(points[i]);
+  if (lastIn < n - 1) out.push(interp(points[lastIn], points[lastIn + 1], hi));
+  return out;
 }
 
 /**

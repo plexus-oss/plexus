@@ -41,6 +41,28 @@ function interpolateCatmullRom(
 	return result;
 }
 
+/**
+ * Average horizontal pixel spacing above which Catmull-Rom smoothing turns
+ * off. Smoothing exists to round the sub-pixel corners of dense series; once
+ * points sit further apart than this (deep zoom framing a handful of
+ * samples), the spline's Y overshoot invents curves between samples that the
+ * data never contained — honest straight segments win. Value is in canvas
+ * device pixels (the renderer's xScale space).
+ */
+export const MAX_SMOOTH_SPACING_PX = 64;
+
+/**
+ * Whether a line with `pointCount` points spanning `pixelSpan` horizontal
+ * pixels should be Catmull-Rom smoothed. Pure — exported for unit tests.
+ */
+export function shouldSmoothLine(
+	pixelSpan: number,
+	pointCount: number,
+): boolean {
+	if (pointCount < 3) return false;
+	return Math.abs(pixelSpan) / (pointCount - 1) <= MAX_SMOOTH_SPACING_PX;
+}
+
 // ── Standard line geometry (position + color + normal + width) ──
 
 export function createLineGeometry(
@@ -57,8 +79,14 @@ export function createLineGeometry(
 	const normals: number[] = [];
 	const widths: number[] = [];
 
+	const pixelSpan =
+		points.length > 1
+			? xScale(points[points.length - 1].x) - xScale(points[0].x)
+			: 0;
 	const renderPoints =
-		smooth && points.length >= 3 ? interpolateCatmullRom(points) : points;
+		smooth && shouldSmoothLine(pixelSpan, points.length)
+			? interpolateCatmullRom(points)
+			: points;
 
 	for (let i = 0; i < renderPoints.length - 1; i++) {
 		const x1 = xScale(renderPoints[i].x);

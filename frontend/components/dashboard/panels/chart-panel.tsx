@@ -72,6 +72,8 @@ import {
 import { useSharedQueryContext } from "@/components/dashboard/shared-query-context";
 import { useChartDomain } from "@/hooks/use-chart-domain";
 import { useChartPanZoom } from "@/hooks/use-chart-pan-zoom";
+import { sliceSeriesToWindow } from "@/lib/data-utils";
+import type { TelemetryData } from "@/components/dashboard/telemetry-provider";
 import { useReferenceLines } from "@/hooks/use-reference-lines";
 import { useAnimatedDomain } from "@/hooks/use-animated-domain";
 import { getDomain } from "@/components/ui/charts/base-chart";
@@ -128,6 +130,31 @@ function binarySearchClosestX(
     }
   }
   return closestPoint;
+}
+
+/** True when a telemetry snapshot holds at least one point in any series. */
+function telemetryHasPoints(data: TelemetryData | null | undefined): boolean {
+  if (!data) return false;
+  return Object.values(data).some(
+    (pts) => Array.isArray(pts) && pts.length > 0,
+  );
+}
+
+/**
+ * True when any series in a telemetry snapshot could intersect [start, end].
+ * Cheap: only each series' first/last timestamps are parsed.
+ */
+function telemetryOverlapsWindow(
+  data: TelemetryData,
+  window: [number, number],
+): boolean {
+  for (const points of Object.values(data)) {
+    if (!Array.isArray(points) || points.length === 0) continue;
+    const first = new Date(points[0].timestamp).getTime();
+    const last = new Date(points[points.length - 1].timestamp).getTime();
+    if (first <= window[1] && last >= window[0]) return true;
+  }
+  return false;
 }
 
 export function ChartPanel({
@@ -276,16 +303,56 @@ export function ChartPanel({
   });
   const [frozenData, setFrozenData] = useState<typeof data | null>(null);
   const isFrozen = !!viewWindow;
+  const dataHasPoints = useMemo(() => telemetryHasPoints(data), [data]);
   useEffect(() => {
     // Capture once when the gesture starts, release when it ends. Deferred to
     // a microtask so the snapshot update isn't a synchronous effect cascade.
+    // The release waits for the post-commit refetch to actually deliver
+    // points: committing a zoom empties the SWR-keyed data until the new
+    // window's fetch lands, and at deep spans that fetch can legitimately
+    // return nothing (a 10ms window between samples). Holding the gesture
+    // snapshot through that gap keeps the surrounding samples on screen
+    // (windowed + edge-interpolated) instead of flashing the panel blank.
     if (isFrozen) {
-      queueMicrotask(() => setFrozenData(dataRef.current));
-    } else {
+      queueMicrotask(() => {
+        // Never snapshot an EMPTY payload over a useful held one — panning
+        // right after a deep commit (data still empty) must keep showing the
+        // pre-zoom snapshot, not blank the chart.
+        if (telemetryHasPoints(dataRef.current)) {
+          setFrozenData(dataRef.current);
+        }
+      });
+    } else if (dataHasPoints) {
       queueMicrotask(() => setFrozenData(null));
     }
-  }, [isFrozen]);
-  const chartData = isFrozen && frozenData ? frozenData : data;
+  }, [isFrozen, dataHasPoints]);
+
+  // The x-window (ms) the chart is displaying: the transient pan/zoom window
+  // while a gesture is in flight, else the committed absolute range. Relative
+  // (live) ranges pass null — their data extent ≈ the window and the right
+  // edge is data-anchored. Drives series windowing + the snapshot fallback.
+  const visibleWindow = useMemo<[number, number] | null>(() => {
+    if (panel.config.xAxisField) return null;
+    if (viewWindow) return [viewWindow.start, viewWindow.end];
+    if (timeRange?.type === "absolute") {
+      const { start, end } = getTimeRangeBounds(timeRange);
+      return [start.getTime(), end.getTime()];
+    }
+    return null;
+  }, [panel.config.xAxisField, viewWindow, timeRange]);
+
+  // Post-commit fallback: while the refetched window has no points, keep
+  // rendering the held snapshot — but only when it can actually intersect the
+  // window. A jump to a genuinely disjoint empty range must still show the
+  // real empty state, not stale data.
+  const snapshotFallback =
+    !isFrozen &&
+    !dataHasPoints &&
+    !!frozenData &&
+    !!visibleWindow &&
+    telemetryOverlapsWindow(frozenData, visibleWindow);
+  const chartData =
+    (isFrozen || snapshotFallback) && frozenData ? frozenData : data;
 
   // Series, domain, reference lines (extracted hooks)
   // Count series must SUM when bars collapse into wider buckets; averaging
@@ -294,7 +361,7 @@ export function ChartPanel({
     panel.dataSource?.type === "connection" &&
     (panel.dataSource.builder?.aggregate.fn === "count" ||
       panel.dataSource.valueColumn === "count");
-  const { timeSeries, activeSeries } = useChartSeries({
+  const { timeSeries, activeSeries, hasData, latestDataTime } = useChartSeries({
     data: chartData,
     displayedMetrics,
     sourceId,
@@ -304,6 +371,7 @@ export function ChartPanel({
     chartType,
     showFutureDashing,
     chartWidth: chartSize.width,
+    xWindow: visibleWindow,
     tz,
     tz12,
     barAggregate: isCountSeries ? "sum" : "avg",
@@ -332,24 +400,28 @@ export function ChartPanel({
   }, [compareEligible, baselineResolution, timeRange]);
 
   // Ghosts render UNDER the primary series (draw order = array order).
-  const seriesForChart = useMemo(
-    () =>
-      ghostSeries.length > 0 ? [...ghostSeries, ...activeSeries] : activeSeries,
-    [ghostSeries, activeSeries],
-  );
+  // Ghosts get the same visible-window slice as the primary series (see
+  // useChartSeries) so a transient deep zoom never maps their offscreen
+  // points to Float32-hostile pixel coordinates.
+  const seriesForChart = useMemo(() => {
+    if (ghostSeries.length === 0) return activeSeries;
+    const ghosts = visibleWindow
+      ? ghostSeries.map((g) => {
+          const sliced = sliceSeriesToWindow(
+            g.data,
+            visibleWindow[0],
+            visibleWindow[1],
+          );
+          return sliced === g.data ? g : { ...g, data: sliced };
+        })
+      : ghostSeries;
+    return [...ghosts, ...activeSeries];
+  }, [ghostSeries, activeSeries, visibleWindow]);
 
-  // Newest data timestamp across visible series — the live viewport anchors to
-  // this so it stays still until new data arrives, then eases to catch up.
-  // Ghost series are deliberately EXCLUDED: a longer, completed baseline
-  // shifted onto a live run would drag the viewport's right edge forward.
-  const latestDataTime = useMemo(() => {
-    let max = 0;
-    for (const s of timeSeries) {
-      const last = s.data[s.data.length - 1];
-      if (last && last.x > max) max = last.x;
-    }
-    return max || undefined;
-  }, [timeSeries]);
+  // Newest data timestamp (pre-windowing, from useChartSeries) — the live
+  // viewport anchors to this so it stays still until new data arrives, then
+  // eases to catch up. Ghost series are deliberately EXCLUDED: a longer,
+  // completed baseline shifted onto a live run would drag the right edge.
 
   const xDomain = useChartDomain({
     timeRange,
@@ -865,7 +937,11 @@ export function ChartPanel({
 
   // ── Early returns ──
 
-  if (isLoading && timeSeries.length === 0) {
+  // Key the loading/empty branches on hasData (pre-windowing), NOT on the
+  // windowed timeSeries: a deep-zoom window that sits between samples empties
+  // timeSeries, and unmounting the chart for it would kill the pan/zoom
+  // listeners mid-interaction (no way to zoom back out).
+  if (isLoading && !hasData) {
     return (
       <div className="h-full flex items-center justify-center">
         <Spinner />
@@ -902,7 +978,7 @@ export function ChartPanel({
     );
   }
 
-  if (timeSeries.length === 0 || timeSeries.every((s) => s.data.length === 0)) {
+  if (!hasData) {
     const isConn = sourceType === "connection";
     // The 0-row probe finds the table's real time span. If it exists, the data
     // is simply outside the selected window — say so and offer to jump to it.
