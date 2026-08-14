@@ -64,6 +64,11 @@ const SatelliteInfoPanel = dynamic(
     })),
   { loading: PanelLoader, ssr: false },
 );
+const Model3DPanel = dynamic(
+  () =>
+    import("./panels/model3d-panel").then((m) => ({ default: m.Model3DPanel })),
+  { loading: PanelLoader, ssr: false },
+);
 const VideoPanel = dynamic(
   () => import("./panels/video-panel").then((m) => ({ default: m.VideoPanel })),
   { loading: PanelLoader },
@@ -94,6 +99,7 @@ const COMPONENT_MAP: Record<string, AnyPanelComponent> = {
   gantt: GanttPanel,
   datagrid: DataGridPanel,
   "fleet-table": FleetTablePanel,
+  model3d: Model3DPanel,
   earth: EarthPanel,
   "satellite-info": SatelliteInfoPanel,
   list: ListPanel,

@@ -175,14 +175,16 @@ export function filterTelemetryData(
 /**
  * The resolved clip window usePanelData applies to panel data before the
  * pipeline runs. ISO bounds are pre-formatted so per-point comparison is a
- * plain string compare (timestamps are ISO-8601); the second-quantized
- * buckets exist for cache keying (points must not flap in/out of the window
- * every render as the clock advances by a few ms).
+ * plain string compare (timestamps are ISO-8601). The buckets exist for cache
+ * keying: bounds derived from a moving clock (relative ranges, an omitted
+ * absolute end) are quantized to whole seconds so points don't flap in/out of
+ * the window every render as the clock advances by a few ms; committed
+ * absolute bounds are already-stable exact ms.
  */
 export interface ClipWindow {
-  /** Lower bound, quantized to whole seconds (cache key). */
+  /** Lower bound cache key: whole seconds (relative), exact ms (absolute). */
   startBucket: number;
-  /** Upper bound, quantized to whole seconds (cache key). */
+  /** Upper bound cache key: whole seconds (relative), exact ms (absolute). */
   endBucket: number;
   startIso: string;
   endIso: string;
@@ -232,10 +234,13 @@ export function resolveClipWindow(
   let startMs: number;
   let endMs: number;
   let enforceUpper: boolean;
+  /** Whether the upper bound came from the wall clock (omitted absolute end). */
+  let wallClockEnd = false;
   if (timeRange.type === "absolute") {
     const [startStr, endStr] = timeRange.value.split("/");
     startMs = Date.parse(startStr);
     endMs = endStr ? Date.parse(endStr) : nowMs;
+    wallClockEnd = !endStr;
     enforceUpper = true;
   } else {
     const rangeMs = parseRelativeTime(timeRange.value);
@@ -244,13 +249,29 @@ export function resolveClipWindow(
     endMs = Math.max(anchor, nowMs);
     enforceUpper = false;
   }
-  const startBucket = Math.floor(startMs / 1000);
-  const endBucket = Math.floor(endMs / 1000);
+
+  // Committed absolute bounds are honored to the MILLISECOND. Every pan/zoom
+  // commit carries ms bounds (toISOString of the gesture window), and the
+  // rendered domain (getTimeRangeBounds) keeps them exactly — flooring the
+  // enforced upper bound to a whole second here amputated every point in
+  // (floor(end), end]: up to 999ms of the NEWEST data inside the domain, so a
+  // dense (250Hz ULog) tail stopped visibly short of the right edge while the
+  // crosshair still found values there. The second-quantization exists only
+  // as an anti-flap cache key for bounds derived from a moving clock — the
+  // relative anchor/now (lower-bound-only, so flooring merely widens) and an
+  // omitted absolute end ("until now"); fixed committed bounds are already
+  // stable cache keys as exact ms.
+  const quantizeStart = timeRange.type !== "absolute";
+  const quantizeEnd = timeRange.type !== "absolute" || wallClockEnd;
+  const startBucket = quantizeStart ? Math.floor(startMs / 1000) : startMs;
+  const endBucket = quantizeEnd ? Math.floor(endMs / 1000) : endMs;
   return {
     startBucket,
     endBucket,
-    startIso: new Date(startBucket * 1000).toISOString(),
-    endIso: new Date(endBucket * 1000).toISOString(),
+    startIso: new Date(
+      quantizeStart ? startBucket * 1000 : startMs,
+    ).toISOString(),
+    endIso: new Date(quantizeEnd ? endBucket * 1000 : endMs).toISOString(),
     enforceUpper,
   };
 }

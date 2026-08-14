@@ -176,6 +176,7 @@ export function generateMockData(panelType: string): TelemetryData | null {
     case "alerts":
     case "earth":
     case "satellite-info":
+    case "model3d":
     case "dashboard":
       return null;
 

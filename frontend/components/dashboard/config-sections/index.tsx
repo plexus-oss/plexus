@@ -16,6 +16,7 @@ import { ListConfig } from "./list-config";
 import { DashboardPanelConfig } from "./dashboard-panel-config";
 import { EarthConfig } from "./earth-config";
 import { SatelliteInfoConfig } from "./satellite-info-config";
+import { Model3DConfig } from "./model3d-config";
 import { AlertsConfig } from "./alerts-config";
 import { EventsConfig } from "./events-config";
 
@@ -49,6 +50,7 @@ const CONFIG_COMPONENTS: Partial<
   dashboard: DashboardPanelConfig,
   earth: EarthConfig,
   "satellite-info": SatelliteInfoConfig,
+  model3d: Model3DConfig,
 } satisfies Partial<Record<KnownPanelType, ComponentType<ConfigSectionProps>>>;
 
 interface PanelConfigSectionProps {

@@ -17,6 +17,7 @@ import type { ComponentType } from "react";
 import type { KnownPanelType } from "@/lib/panels/registry";
 import type { TimeRange } from "@/lib/types/dashboard";
 import { DataConfigurator } from "./data-configurator";
+import { Model3DConfigurator } from "./model3d-configurator";
 import { VideoConfigurator } from "./video-configurator";
 import { PassthroughConfigurator } from "./passthrough-configurator";
 import { DashboardConfigurator } from "./dashboard-configurator";
@@ -43,6 +44,7 @@ const CONFIGURATORS: Record<string, ComponentType<ConfiguratorProps>> = {
   "fleet-table": FleetConfigurator,
 
   // Media
+  model3d: Model3DConfigurator,
   video: VideoConfigurator,
 
   // Nested

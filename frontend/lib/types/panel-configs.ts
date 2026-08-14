@@ -7,11 +7,14 @@
  */
 
 import type { Transform } from "@/lib/transforms";
+import type { ColorScaleName } from "@/components/ui/lib/color-scales";
 import type { KnownPanelType } from "@/lib/panels/registry";
 import type {
   DataFilter,
   DataAggregation,
   Aggregation,
+  Model3DPartBinding,
+  TelemetryBinding,
   AssocCategory,
 } from "./dashboard";
 
@@ -102,6 +105,46 @@ export interface StatPanelConfig extends BasePanelConfig {
   showTrend?: boolean;
   /** Number of recent data points used for trend calculation (default 20) */
   trendWindow?: number;
+}
+
+// =============================================================================
+// Model 3D Panel
+// =============================================================================
+
+export interface Model3DPanelConfig extends BasePanelConfig {
+  modelUrl?: string;
+  modelType?: "stl" | "obj" | "gltf" | "glb";
+  /** Built-in primitive — takes precedence over modelUrl when set. */
+  shape?: "cylinder" | "box" | "cone";
+  wireframe?: boolean;
+  autoRotate?: boolean;
+  pitchMetric?: string;
+  rollMetric?: string;
+  yawMetric?: string;
+  model3dPartBindings?: Model3DPartBinding[];
+  model3dColorScale?: ColorScaleName;
+  model3dAutoRange?: boolean;
+  model3dMinValue?: number;
+  model3dMaxValue?: number;
+  /** Phase 2: unified bindings (read-preferred over model3dPartBindings) */
+  bindings?: TelemetryBinding[];
+  /** Per-group visibility map keyed by Object3D name */
+  modelLayerVisibility?: Record<string, boolean>;
+  /** Show floating value callouts anchored to bound mesh parts */
+  showCallouts?: boolean;
+  /** Show hairline leader lines from callout to mesh */
+  showLeaderLines?: boolean;
+  // CAD-style rendering & motion
+  cadStyle?: boolean;
+  backgroundColor?: string;
+  modelRotationOffset?: [number, number, number];
+  partScales?: Record<string, number>;
+  partSpins?: Record<string, { axis: "x" | "y" | "z"; speed: number }>;
+  fixedParts?: string[];
+  positionXMetric?: string;
+  positionYMetric?: string;
+  positionZMetric?: string;
+  positionScale?: number;
 }
 
 // =============================================================================
@@ -389,6 +432,7 @@ export interface PanelConfigMap {
   stat: StatPanelConfig;
   datagrid: DataGridPanelConfig;
   "fleet-table": FleetTablePanelConfig;
+  model3d: Model3DPanelConfig;
   earth: EarthPanelConfig;
   "satellite-info": SatelliteInfoPanelConfig;
   video: VideoPanelConfig;

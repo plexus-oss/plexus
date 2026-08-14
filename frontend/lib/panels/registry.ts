@@ -16,6 +16,7 @@ import {
   Hash,
   GanttChart,
   Table,
+  Box,
   Layers,
   VideoIcon,
   ListIcon,
@@ -49,6 +50,7 @@ export const PANEL_TYPES = [
   "stat",
   "datagrid",
   "fleet-table",
+  "model3d",
   "earth",
   "satellite-info",
   "video",
@@ -133,6 +135,7 @@ const PANEL_VISIBILITY: Record<KnownPanelType, PanelVisibility> = {
   alerts: "core",
   dashboard: "core",
   video: "advanced",
+  model3d: "advanced",
   "fleet-table": "advanced",
   devices: "advanced",
   events: "advanced",
@@ -307,6 +310,20 @@ registerPanel({
     "Pure realtime (no SQL). panel.sources = device slugs (rows). panel.config.columns = metric columns with optional warnAbove / critAbove / warnBelow / critBelow thresholds. Row order: worst severity first.",
 });
 // --- 3D ---
+registerPanel({
+  type: "model3d",
+  label: "3D Model",
+  description: "Live orientation on a primitive or CAD model",
+  icon: Box,
+  category: "3d",
+  source: "none",
+  lazy: true,
+  ssr: false,
+  defaultSize: "large",
+  defaultConfig: { shape: "cylinder" },
+  dataHint:
+    "Built-in cylinder/box/cone or a model URL (GLTF, GLB, STL)\nMetrics named pitch / roll / yaw drive orientation\nBind other metrics to model parts",
+});
 registerPanel({
   type: "earth",
   label: "Earth",
