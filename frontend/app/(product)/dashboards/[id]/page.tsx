@@ -49,6 +49,10 @@ import {
   isMetricDrag,
   markMetricDropped,
 } from "@/lib/dashboard/metric-dnd";
+import {
+  classifySignal,
+  fetchSignalSample,
+} from "@/lib/dashboard/classify-signal";
 import { cn } from "@/lib/utils";
 import {
   LayoutDashboard,
@@ -269,9 +273,56 @@ export default function DashboardPage({ params }: DashboardPageProps) {
     [markDirty],
   );
 
-  // Create a new line panel for a metric, placed in the grid's next free slot
+  // After a drop-created panel appears (as a line, instantly), a cheap sample
+  // fetch classifies the signal's shape; if the verdict differs, the panel's
+  // type is updated through the same localConfig path every panel edit takes.
+  // Guarded so it never overwrites a type the user changed in the meantime,
+  // and any fetch failure/timeout simply keeps the line default.
+  const classifyAndRetypePanel = useCallback(
+    async (panelId: string, qualifiedMetric: string, timeRange: string) => {
+      const sample = await fetchSignalSample(qualifiedMetric, timeRange);
+      if (!sample) return;
+      const verdict = classifySignal(sample);
+      if (verdict.chartType === "line") return;
+      setLocalConfig((prev) => {
+        if (!prev) return prev;
+        const panel = prev.panels.find((p) => p.id === panelId);
+        // Only retype the untouched drop default (still a single-metric line).
+        if (
+          !panel ||
+          panel.type !== "line" ||
+          panel.metrics.length !== 1 ||
+          panel.metrics[0] !== qualifiedMetric
+        )
+          return prev;
+        const updatedPanels = prev.panels.map((p) =>
+          p.id === panelId
+            ? {
+                ...p,
+                type: verdict.chartType,
+                // A state signal should never be smoothed if the user flips
+                // the panel back to a line chart.
+                config: verdict.stepped
+                  ? { ...p.config, smoothLines: false }
+                  : p.config,
+              }
+            : p,
+        );
+        const next = { ...prev, panels: updatedPanels };
+        localConfigRef.current = next;
+        markDirty();
+        return next;
+      });
+    },
+    [markDirty],
+  );
+
+  // Create a new panel for a metric, placed in the grid's next free slot
   // (bottom row; vertical compaction pulls it up into any gap). Goes through
-  // handleAddPanel — the same path the Add Panel modal uses.
+  // handleAddPanel — the same path the Add Panel modal uses. The panel is
+  // created as a line instantly (the drop must never wait on a network
+  // round-trip); classifyAndRetypePanel then picks the honest chart type from
+  // a small sample of the signal.
   const handleCreatePanelFromMetric = useCallback(
     (qualifiedMetric: string) => {
       const cfg = localConfigRef.current;
@@ -284,8 +335,9 @@ export default function DashboardPage({ params }: DashboardPageProps) {
       const bare = qualifiedMetric.includes(":")
         ? qualifiedMetric.split(":").slice(1).join(":")
         : qualifiedMetric;
+      const panelId = `panel-${Date.now()}`;
       handleAddPanel({
-        id: `panel-${Date.now()}`,
+        id: panelId,
         type: "line",
         title: bare,
         metrics: [qualifiedMetric],
@@ -300,8 +352,11 @@ export default function DashboardPage({ params }: DashboardPageProps) {
           minH: size.minH,
         },
       });
+      // Fire-and-forget: classification samples the dashboard's current
+      // window so the verdict matches what the panel will actually show.
+      void classifyAndRetypePanel(panelId, qualifiedMetric, cfg.timeRange.value);
     },
-    [handleAddPanel],
+    [handleAddPanel, classifyAndRetypePanel],
   );
 
   // Empty-space drop zone (the padding around/below the grid): dropping a

@@ -6,7 +6,9 @@
  * chart composition:
  *
  * - Drag a metric row onto a chart-family panel → appends it to that panel.
- * - Drag onto empty dashboard space → creates a new line panel.
+ * - Drag onto empty dashboard space → creates a new panel (line instantly;
+ *   a drop-time sample classifies state/sparse signals into honest types —
+ *   see lib/dashboard/classify-signal.ts).
  * - Click a row (no-drag fallback) → "Add to…" menu of chart panels + New panel.
  *
  * The Add Panel modal stays the full-featured path; this rail is the fast one.
@@ -47,7 +49,7 @@ interface SignalRailProps {
   panels: Panel[];
   /** Append a qualified metric to an existing chart panel (saved via the panel-update path). */
   onAddToPanel: (panelId: string, qualifiedMetric: string) => void;
-  /** Create a new line panel for a qualified metric (existing add-panel path). */
+  /** Create a new panel for a qualified metric (line first, then signal-shape classified). */
   onCreatePanel: (qualifiedMetric: string) => void;
   onClose: () => void;
 }
