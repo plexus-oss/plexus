@@ -29,13 +29,18 @@ export interface ModelViewerProps {
   modelUrl?: string;
   modelType?: "stl" | "obj" | "gltf" | "glb";
   /** Built-in primitive body — rendered instead of a loaded model when set. */
-  shape?: "cylinder" | "box" | "cone";
+  shape?: "cylinder" | "box" | "cone" | "capsule";
   /**
    * Live attitude from telemetry, in degrees. When set, the whole model
    * tracks it (smoothed): yaw spins about the vertical axis, pitch tips
    * fore/aft, roll tips side to side. Overrides autoRotate.
    */
   orientationDeg?: { pitch: number; roll: number; yaw: number } | null;
+  /**
+   * Live attitude as a normalized quaternion [x, y, z, w]. Takes precedence
+   * over orientationDeg — no Euler conversion, no gimbal artifacts.
+   */
+  orientationQuat?: [number, number, number, number] | null;
   modelData?: Float32Array | ArrayBuffer;
   vertexColors?: number[]; // Per-vertex color values (0-1)
   colorScale?: (value: number) => string;
@@ -99,8 +104,9 @@ export interface ModelViewerProps {
 interface ModelViewerContextType {
   modelUrl?: string;
   modelType: "stl" | "obj" | "gltf" | "glb";
-  shape?: "cylinder" | "box" | "cone";
+  shape?: "cylinder" | "box" | "cone" | "capsule";
   orientationDeg?: { pitch: number; roll: number; yaw: number } | null;
+  orientationQuat?: [number, number, number, number] | null;
   modelData?: Float32Array | ArrayBuffer;
   vertexColors?: number[];
   colorScale: (value: number) => string;
@@ -728,10 +734,16 @@ function StlObjModel() {
 // ============================================================================
 // Primitive Model Component
 //
-// Built-in bodies (cylinder / box / cone) so an orientation panel needs zero
-// CAD files. A bare cylinder is rotationally symmetric — yaw would be
-// invisible — so every primitive carries a nose cap (up) and a heading fin
-// (forward) as orientation markers.
+// Built-in bodies (cylinder / box / cone / capsule) so an orientation panel
+// needs zero CAD files. Cylinder/box/cone carry a nose cap (up) and a heading
+// fin (forward) so orientation reads on symmetric bodies. Capsule is the
+// "pod" body: a horizontal hologram-wireframe hull with four internal rack
+// discs — the anatomy submersible/enclosure pods tend to have — and every
+// named part accepts callout bindings.
+//
+// Named meshes announce themselves (onPartsDiscovered), emit throttled
+// screen positions (for callout leader lines), and forward hover/click —
+// the same contract GltfModel provides for loaded models.
 // ============================================================================
 
 const PRIMITIVE_DIMS = {
@@ -740,15 +752,148 @@ const PRIMITIVE_DIMS = {
   cone: { noseY: 1.04, finY: -0.7, finZ: 0.42 },
 } as const;
 
-function PrimitiveModel() {
-  const { shape, wireframe, metalness, roughness, modelRotationOffset } =
-    useModelViewerData();
-  const kind = shape ?? "cylinder";
-  const dims = PRIMITIVE_DIMS[kind];
+const HOLO_WIRE = "#22c55e"; // hologram wireframe green
+const CAPSULE_RACK_XS = [-0.49, -0.16, 0.16, 0.49] as const;
+const CAPSULE_RACK_NAMES = ["rack_a", "rack_b", "rack_c", "rack_d"] as const;
 
+const PRIMITIVE_PART_NAMES: Record<string, string[]> = {
+  cylinder: ["body", "nose", "fin"],
+  box: ["body", "nose", "fin"],
+  cone: ["body", "nose", "fin"],
+  capsule: ["hull", ...CAPSULE_RACK_NAMES],
+};
+
+function PrimitiveModel() {
+  const {
+    shape,
+    wireframe,
+    metalness,
+    roughness,
+    modelRotationOffset,
+    onPartsDiscovered,
+    onPartScreenPositions,
+    onPartClick,
+    onPartHover,
+  } = useModelViewerData();
+  const kind = shape ?? "cylinder";
+  const groupRef = useRef<THREE.Group>(null);
+
+  // Announce named parts so config UIs and drop-to-bind callouts see them.
+  useEffect(() => {
+    onPartsDiscovered?.(PRIMITIVE_PART_NAMES[kind] ?? []);
+  }, [kind, onPartsDiscovered]);
+
+  // Screen positions for callout anchors — same projection + ~30 Hz
+  // throttle as GltfModel's emitter.
+  const lastEmitRef = useRef(0);
+  useFrame((state) => {
+    const root = groupRef.current;
+    if (!onPartScreenPositions || !root) return;
+    const now = performance.now();
+    if (now - lastEmitRef.current < 33) return;
+    lastEmitRef.current = now;
+    const out: Record<string, { x: number; y: number; depth: number }> = {};
+    const tmpBox = new THREE.Box3();
+    const tmpCenter = new THREE.Vector3();
+    root.traverse((child) => {
+      const mesh = child as THREE.Mesh;
+      if (!mesh.isMesh || !child.name) return;
+      tmpBox.setFromObject(mesh);
+      if (tmpBox.isEmpty()) return;
+      tmpBox.getCenter(tmpCenter);
+      if (!Number.isFinite(tmpCenter.x)) return;
+      const projected = tmpCenter.clone().project(state.camera);
+      if (projected.z < -1 || projected.z > 1) return;
+      out[child.name] = {
+        x: (projected.x * 0.5 + 0.5) * state.size.width,
+        y: (1 - (projected.y * 0.5 + 0.5)) * state.size.height,
+        depth: projected.z,
+      };
+    });
+    onPartScreenPositions(out);
+  });
+
+  // Hover/click forwarding for a named mesh — the same contract the panel
+  // relies on for GLTF parts (click-to-bind, hover chip).
+  const partEvents = (name: string) => ({
+    onPointerOver: (e: { stopPropagation: () => void }) => {
+      e.stopPropagation();
+      onPartHover?.(name);
+    },
+    onPointerOut: () => onPartHover?.(null),
+    onClick: (e: {
+      stopPropagation: () => void;
+      nativeEvent: MouseEvent;
+    }) => {
+      e.stopPropagation();
+      onPartClick?.(name, {
+        x: e.nativeEvent.clientX,
+        y: e.nativeEvent.clientY,
+      });
+    },
+  });
+
+  if (kind === "capsule") {
+    // Lying along X. Hull rendered twice: translucent shell + dense green
+    // wireframe overlay (the hologram look), racks visible through it.
+    const lieOnSide: [number, number, number] = [0, 0, Math.PI / 2];
+    return (
+      <group ref={groupRef} rotation={modelRotationOffset ?? [0, 0, 0]}>
+        <mesh name="hull" rotation={lieOnSide} {...partEvents("hull")}>
+          <capsuleGeometry args={[0.45, 1.3, 8, 24]} />
+          <meshStandardMaterial
+            color="#0c1210"
+            transparent
+            opacity={0.32}
+            depthWrite={false}
+            roughness={roughness}
+            metalness={metalness}
+          />
+        </mesh>
+        <mesh rotation={lieOnSide}>
+          <capsuleGeometry args={[0.45, 1.3, 8, 24]} />
+          <meshBasicMaterial
+            color={HOLO_WIRE}
+            wireframe
+            transparent
+            opacity={0.28}
+          />
+        </mesh>
+        {CAPSULE_RACK_XS.map((x, i) => (
+          <group key={CAPSULE_RACK_NAMES[i]} position={[x, 0, 0]}>
+            <mesh
+              name={CAPSULE_RACK_NAMES[i]}
+              rotation={lieOnSide}
+              {...partEvents(CAPSULE_RACK_NAMES[i])}
+            >
+              <cylinderGeometry args={[0.36, 0.36, 0.08, 24]} />
+              <meshStandardMaterial
+                color="#102415"
+                transparent
+                opacity={0.55}
+              />
+            </mesh>
+            <mesh rotation={lieOnSide}>
+              <cylinderGeometry args={[0.36, 0.36, 0.08, 24]} />
+              <meshBasicMaterial
+                color={HOLO_WIRE}
+                wireframe
+                transparent
+                opacity={0.5}
+              />
+            </mesh>
+          </group>
+        ))}
+      </group>
+    );
+  }
+
+  const dims = PRIMITIVE_DIMS[kind as keyof typeof PRIMITIVE_DIMS];
   return (
-    <group rotation={modelRotationOffset ?? [0, 0, 0]}>
-      <mesh>
+    <group ref={groupRef} rotation={modelRotationOffset ?? [0, 0, 0]}>
+      {/* Named meshes so callout bindings and click-to-bind work on
+          primitives exactly like on named GLTF parts. */}
+      <mesh name="body" {...partEvents("body")}>
         {kind === "cylinder" ? (
           <cylinderGeometry args={[0.65, 0.65, 2, 48]} />
         ) : kind === "box" ? (
@@ -764,12 +909,16 @@ function PrimitiveModel() {
         />
       </mesh>
       {/* Nose cap — makes pitch/roll legible */}
-      <mesh position={[0, dims.noseY, 0]}>
+      <mesh name="nose" position={[0, dims.noseY, 0]} {...partEvents("nose")}>
         <sphereGeometry args={[0.16, 24, 16]} />
         <meshStandardMaterial color="#f59e0b" roughness={0.4} />
       </mesh>
       {/* Heading fin — makes yaw legible on a symmetric body */}
-      <mesh position={[0, dims.finY, dims.finZ]}>
+      <mesh
+        name="fin"
+        position={[0, dims.finY, dims.finZ]}
+        {...partEvents("fin")}
+      >
         <boxGeometry args={[0.05, 0.65, 0.3]} />
         <meshStandardMaterial color="#f59e0b" roughness={0.4} />
       </mesh>
@@ -821,6 +970,7 @@ function Scene() {
     modelType,
     shape,
     orientationDeg,
+    orientationQuat,
     cadStyle,
     spaceScene,
     earthBackdropPosition,
@@ -828,11 +978,16 @@ function Scene() {
   } = useModelViewerData();
   const meshRef = useRef<THREE.Group>(null);
 
-  // Latest telemetry attitude as a quaternion target. "YXZ" = yaw about the
-  // vertical axis first, then pitch (fore/aft), then roll (side to side) —
-  // heading-pitch-roll, quaternions so yaw wrapping 359°→0° slerps the short
-  // way instead of spinning backwards.
+  // Latest telemetry attitude as a quaternion target. A quaternion binding
+  // is used directly (normalized defensively); euler input is "YXZ" = yaw
+  // about the vertical axis first, then pitch (fore/aft), then roll (side
+  // to side) — heading-pitch-roll. Either way the target is a quaternion so
+  // yaw wrapping 359°→0° slerps the short way instead of spinning backwards.
   const targetQuat = useMemo(() => {
+    if (orientationQuat) {
+      const [x, y, z, w] = orientationQuat;
+      return new THREE.Quaternion(x, y, z, w).normalize();
+    }
     if (!orientationDeg) return null;
     const d = Math.PI / 180;
     const euler = new THREE.Euler(
@@ -842,7 +997,7 @@ function Scene() {
       "YXZ",
     );
     return new THREE.Quaternion().setFromEuler(euler);
-  }, [orientationDeg]);
+  }, [orientationDeg, orientationQuat]);
 
   useFrame((_, delta) => {
     const group = meshRef.current;
@@ -965,6 +1120,7 @@ function Root({
   modelType = "stl",
   shape,
   orientationDeg,
+  orientationQuat,
   modelData,
   vertexColors,
   colorScale = viridis,
@@ -1008,6 +1164,7 @@ function Root({
     modelType,
     shape,
     orientationDeg,
+    orientationQuat,
     modelData,
     vertexColors,
     colorScale,

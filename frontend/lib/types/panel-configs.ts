@@ -115,12 +115,17 @@ export interface Model3DPanelConfig extends BasePanelConfig {
   modelUrl?: string;
   modelType?: "stl" | "obj" | "gltf" | "glb";
   /** Built-in primitive — takes precedence over modelUrl when set. */
-  shape?: "cylinder" | "box" | "cone";
+  shape?: "cylinder" | "box" | "cone" | "capsule";
   wireframe?: boolean;
   autoRotate?: boolean;
   pitchMetric?: string;
   rollMetric?: string;
   yawMetric?: string;
+  /** Quaternion orientation — when all four are set, overrides pitch/roll/yaw */
+  quatWMetric?: string;
+  quatXMetric?: string;
+  quatYMetric?: string;
+  quatZMetric?: string;
   model3dPartBindings?: Model3DPartBinding[];
   model3dColorScale?: ColorScaleName;
   model3dAutoRange?: boolean;

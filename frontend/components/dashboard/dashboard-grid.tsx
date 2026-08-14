@@ -52,6 +52,7 @@ const GridCell = memo(function GridCell({
   onPanelConfigChange,
   onPanelRemove,
   hidePanelTitles,
+  canBindMetrics,
 }: {
   panel: Panel;
   timeRange: TimeRange;
@@ -64,6 +65,7 @@ const GridCell = memo(function GridCell({
   ) => void;
   onPanelRemove?: (panelId: string) => void;
   hidePanelTitles?: boolean;
+  canBindMetrics?: boolean;
 }) {
   const handleEditClick = useCallback(() => {
     onPanelSelect?.(panel.id);
@@ -95,6 +97,7 @@ const GridCell = memo(function GridCell({
           timeRange={timeRange}
           isEditing={isEditing}
           onConfigChange={handleConfigChange}
+          canBindMetrics={canBindMetrics}
         />
       </PanelErrorBoundary>
     </DashboardPanel>
@@ -362,6 +365,7 @@ export function DashboardGrid({
               onPanelConfigChange={handlePanelConfigChange}
               onPanelRemove={handlePanelRemove}
               hidePanelTitles={config.displaySettings?.hidePanelTitles}
+              canBindMetrics={!!onMetricDrop}
             />
           </div>
         ))}

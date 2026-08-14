@@ -17,10 +17,11 @@ import type { ConfiguratorProps } from "./types";
 
 const ACCEPTED = ".glb,.gltf,.stl,.obj,model/gltf-binary,model/gltf+json";
 
-type PrimitiveShape = "cylinder" | "box" | "cone";
+type PrimitiveShape = "cylinder" | "box" | "cone" | "capsule";
 
 const SHAPES: { value: PrimitiveShape; label: string }[] = [
   { value: "cylinder", label: "Cylinder" },
+  { value: "capsule", label: "Pod" },
   { value: "box", label: "Box" },
   { value: "cone", label: "Cone" },
 ];

@@ -124,6 +124,9 @@ interface PanelRendererProps {
   /** Patches the panel's `config` JSON. Currently used only by interactive
    *  panels (Schematic, Model 3D). Other panels ignore it. */
   onConfigChange?: (updates: Record<string, unknown>) => void;
+  /** True when signal-rail metric drops may bind (dashboard editable by
+   *  this viewer). Consumed by panels that handle drops themselves. */
+  canBindMetrics?: boolean;
 }
 
 /**
@@ -135,6 +138,7 @@ export const PanelRenderer = memo(function PanelRenderer({
   timeRange,
   isEditing,
   onConfigChange,
+  canBindMetrics,
 }: PanelRendererProps) {
   const Component = COMPONENT_MAP[panel.type];
   // Scoped members get a labeled state instead of an empty/failed panel when
@@ -163,6 +167,7 @@ export const PanelRenderer = memo(function PanelRenderer({
       timeRange={timeRange}
       isEditing={isEditing}
       onConfigChange={onConfigChange}
+      canBindMetrics={canBindMetrics}
       {...extraProps}
     />
   );

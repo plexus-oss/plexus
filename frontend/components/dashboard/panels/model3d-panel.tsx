@@ -7,6 +7,19 @@ import { usePanelData } from "@/hooks/use-panel-data";
 import type { Panel, TimeRange, TelemetryBinding } from "@/lib/types/dashboard";
 import { colorScales } from "@/components/ui/lib/color-scales";
 import { Callouts3DOverlay } from "./model3d/callouts-overlay";
+import { useDashboardInteraction } from "@/components/dashboard/dashboard-interaction-context";
+import {
+  METRIC_DRAG_MIME,
+  isMetricDrag,
+  markMetricDropped,
+} from "@/lib/dashboard/metric-dnd";
+import {
+  resolveOrientation,
+  orientationMetrics,
+  samplePointAt,
+  quatToEulerYXZDeg,
+  type SamplablePoint,
+} from "@/lib/panels/orientation";
 
 const ModelViewer = dynamic(
   () =>
@@ -28,7 +41,21 @@ interface Model3DPanelProps {
   timeRange: TimeRange;
   isEditing?: boolean;
   onConfigChange?: (updates: Record<string, unknown>) => void;
+  /** Signal-rail drops allowed (dashboard is editable by this viewer). */
+  canBindMetrics?: boolean;
 }
+
+/** Slots the drop-point chooser can bind a dragged metric to. */
+const DROP_SLOTS = {
+  pitchMetric: "Pitch",
+  rollMetric: "Roll",
+  yawMetric: "Yaw",
+  quatWMetric: "Quat W",
+  quatXMetric: "Quat X",
+  quatYMetric: "Quat Y",
+  quatZMetric: "Quat Z",
+} as const;
+type DropSlotKey = keyof typeof DROP_SLOTS;
 
 // ─── NASA Public Domain Models (CORS-enabled, zero auth) ───────────────────
 
@@ -161,6 +188,7 @@ export function Model3DPanel({
   timeRange,
   isEditing,
   onConfigChange,
+  canBindMetrics,
 }: Model3DPanelProps) {
   const config = panel.config;
   const modelUrl = config.modelUrl;
@@ -193,37 +221,62 @@ export function Model3DPanel({
   const showCallouts = config.showCallouts !== false;
   const showLeaderLines = config.showLeaderLines !== false;
 
-  // Subscribe to whatever metrics the callout bindings reference, on top
-  // of the panel's own metrics list.
+  // Subscribe to whatever metrics the callout bindings AND orientation
+  // slots reference, on top of the panel's own metrics list — a slot bound
+  // via drop or the sidebar must produce a live subscription even if the
+  // metric was never picked in the Add Panel modal.
   const augmentedPanel = useMemo<Panel>(() => {
-    const extra = (config.bindings as TelemetryBinding[] | undefined)
-      ?.map((b) => b.metric)
-      .filter(Boolean) as string[] | undefined;
-    if (!extra || extra.length === 0) return panel;
+    const extra = [
+      ...(((config.bindings as TelemetryBinding[] | undefined)
+        ?.map((b) => b.metric)
+        .filter(Boolean) as string[] | undefined) ?? []),
+      ...orientationMetrics(config),
+    ];
+    if (extra.length === 0) return panel;
     const merged = Array.from(new Set([...(panel.metrics ?? []), ...extra]));
+    if (merged.length === (panel.metrics ?? []).length) return panel;
     return { ...panel, metrics: merged };
-  }, [panel, config.bindings]);
+  }, [panel, config]);
 
   const { data, metrics } = usePanelData({
     panel: augmentedPanel,
     timeRange,
   });
 
-  // Reduce telemetry to {metric → latestValue} for the callouts.
+  // ── Time scrubbing ─────────────────────────────────────────────────
+  // The dashboard's shared time cursor: a pinned tracker wins; while
+  // unpinned, hovering any chart drives the model transiently (the
+  // PlotJuggler synchronized-cursor feel). Null → follow live/latest.
+  // The context ships a no-op default, so this is safe outside a
+  // dashboard (previews render live-only).
+  const { pinnedTimestamp, hoveredTimestamp } = useDashboardInteraction();
+  const scrubTimestamp = pinnedTimestamp ?? hoveredTimestamp;
+  const scrubMs = useMemo(
+    () => (scrubTimestamp ? new Date(scrubTimestamp).getTime() : null),
+    [scrubTimestamp],
+  );
+
+  // Series point at the scrub cursor, or the latest point when live.
+  const pointAt = useCallback(
+    (series: SamplablePoint[] | undefined): SamplablePoint | null => {
+      if (!series || series.length === 0) return null;
+      return scrubMs === null
+        ? series[series.length - 1]
+        : samplePointAt(series, scrubMs);
+    },
+    [scrubMs],
+  );
+
+  // Reduce telemetry to {metric → value at the cursor} for the callouts.
   const calloutValues = useMemo(() => {
     const out: Record<string, number | string | null> = {};
     for (const b of calloutBindings) {
-      const series = data[b.metric];
-      if (!series || series.length === 0) {
-        out[b.metric] = null;
-        continue;
-      }
-      const last = series[series.length - 1];
+      const point = pointAt(data[b.metric]);
       out[b.metric] =
-        last && typeof last.value !== "undefined" ? last.value : null;
+        point && typeof point.value !== "undefined" ? point.value : null;
     }
     return out;
-  }, [calloutBindings, data]);
+  }, [calloutBindings, data, pointAt]);
 
   // Linear-style "extras": delta over a fixed window + last-update
   // timestamp. The Callout renders these as the meta row.
@@ -235,23 +288,24 @@ export function Model3DPanel({
     > = {};
     for (const b of calloutBindings) {
       const series = data[b.metric];
-      if (!series || series.length === 0) {
+      const ref = pointAt(series);
+      if (!series || !ref) {
         out[b.metric] = {};
         continue;
       }
-      const last = series[series.length - 1];
       const entry: {
         delta?: number;
         deltaWindowSec?: number;
         lastUpdatedAt?: string;
       } = {
-        lastUpdatedAt: last?.timestamp,
+        lastUpdatedAt: ref.timestamp,
       };
-      // Delta vs. an older point ~DELTA_WINDOW_SEC ago. Searches from the
-      // end backwards so it's cheap.
-      if (typeof last?.value === "number" && last.timestamp) {
+      // Delta vs. an older point ~DELTA_WINDOW_SEC before the cursor.
+      // Searches from the end backwards so it's cheap; points after the
+      // cursor fail the cutoff check and are skipped.
+      if (typeof ref.value === "number" && ref.timestamp) {
         const cutoff =
-          new Date(last.timestamp).getTime() - DELTA_WINDOW_SEC * 1000;
+          new Date(ref.timestamp).getTime() - DELTA_WINDOW_SEC * 1000;
         let older: { value: number } | null = null;
         for (let i = series.length - 2; i >= 0; i--) {
           const p = series[i];
@@ -262,14 +316,14 @@ export function Model3DPanel({
           }
         }
         if (older) {
-          entry.delta = (last.value as number) - older.value;
+          entry.delta = (ref.value as number) - older.value;
           entry.deltaWindowSec = DELTA_WINDOW_SEC;
         }
       }
       out[b.metric] = entry;
     }
     return out;
-  }, [calloutBindings, data]);
+  }, [calloutBindings, data, pointAt]);
 
   const [discoveredParts, setDiscoveredParts] = useState<string[]>([]);
   const onPartsDiscovered = useCallback((parts: string[]) => {
@@ -323,6 +377,81 @@ export function Model3DPanel({
       setClickSelection(null);
     },
     [clickSelection, onConfigChange, panel.config.bindings],
+  );
+
+  // ── Signal-rail drop → bind chooser ────────────────────────────────
+  // The panel handles metric drags itself (the grid only rings/accepts
+  // chart-family panels): target-phase handlers fire before the grid
+  // cell's bubbling ones, so preventDefault makes the drop legal here and
+  // stopPropagation keeps the grid out of it.
+  const acceptDrops = !!canBindMetrics && !!onConfigChange;
+  const [isMetricDragOver, setIsMetricDragOver] = useState(false);
+  const [dropSelection, setDropSelection] = useState<{
+    metric: string;
+    screen: { x: number; y: number };
+  } | null>(null);
+
+  const handleMetricDragOver = useCallback(
+    (e: React.DragEvent) => {
+      if (!acceptDrops || !isMetricDrag(e.dataTransfer)) return;
+      e.preventDefault();
+      e.stopPropagation();
+      e.dataTransfer.dropEffect = "copy";
+      setIsMetricDragOver(true);
+    },
+    [acceptDrops],
+  );
+  const handleMetricDragLeave = useCallback((e: React.DragEvent) => {
+    if (
+      e.relatedTarget instanceof Node &&
+      e.currentTarget.contains(e.relatedTarget)
+    )
+      return;
+    setIsMetricDragOver(false);
+  }, []);
+  const handleMetricDrop = useCallback(
+    (e: React.DragEvent) => {
+      if (!acceptDrops || !isMetricDrag(e.dataTransfer)) return;
+      e.preventDefault();
+      e.stopPropagation();
+      setIsMetricDragOver(false);
+      const metric = e.dataTransfer.getData(METRIC_DRAG_MIME);
+      if (!metric) return;
+      setDropSelection({
+        metric,
+        screen: { x: e.clientX, y: e.clientY },
+      });
+      markMetricDropped();
+    },
+    [acceptDrops],
+  );
+
+  const applyDropBinding = useCallback(
+    (slot: DropSlotKey | "callout") => {
+      if (!dropSelection || !onConfigChange) return;
+      const metric = dropSelection.metric;
+      if (slot === "callout") {
+        const existing =
+          (panel.config.bindings as TelemetryBinding[] | undefined) ?? [];
+        const anchorName = discoveredParts.includes("body")
+          ? "body"
+          : (discoveredParts[0] ?? "body");
+        const fresh: TelemetryBinding = {
+          id:
+            typeof crypto !== "undefined" && "randomUUID" in crypto
+              ? crypto.randomUUID()
+              : `b-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+          anchor: { kind: "mesh-name", name: anchorName },
+          metric,
+          display: "value",
+        };
+        onConfigChange({ bindings: [...existing, fresh] });
+      } else {
+        onConfigChange({ [slot]: metric });
+      }
+      setDropSelection(null);
+    },
+    [dropSelection, onConfigChange, panel.config.bindings, discoveredParts],
   );
 
   const isDemoMode = !modelUrl && !shape;
@@ -382,9 +511,7 @@ export function Model3DPanel({
     const emissive: Record<string, { color: string; intensity: number }> = {};
 
     for (const b of bindings) {
-      const metricData = data[b.metric];
-      if (!metricData) continue;
-      const latest = metricData[metricData.length - 1];
+      const latest = pointAt(data[b.metric]);
       if (!latest || typeof latest.value !== "number") continue;
 
       const v = latest.value;
@@ -412,6 +539,7 @@ export function Model3DPanel({
     demoPartEmissive,
     bindings,
     data,
+    pointAt,
     scale,
     autoRange,
     manualMin,
@@ -419,34 +547,22 @@ export function Model3DPanel({
   ]);
 
   // ── Orientation from telemetry ─────────────────────────────────────
-  const orientation = useMemo(() => {
-    if (!data) return { pitch: 0, roll: 0, yaw: 0 };
-    let pitchValue = 0;
-    let rollValue = 0;
-    let yawValue = 0;
+  // Explicit slot bindings win, name matching only fills unbound slots,
+  // and a full quaternion binding overrides euler entirely. Sampled at
+  // the scrub cursor when one is set. (lib/panels/orientation.ts)
+  const resolvedOrientation = useMemo(
+    () => (data ? resolveOrientation(data, metrics, config, scrubMs) : null),
+    [data, metrics, config, scrubMs],
+  );
+  const hasTelemetryOrientation = resolvedOrientation !== null;
 
-    const keysToUse = metrics.length > 0 ? metrics : Object.keys(data);
-    for (const metric of keysToUse) {
-      const metricData = data[metric] || [];
-      const latest = metricData[metricData.length - 1];
-      if (!latest || typeof latest.value !== "number") continue;
-      const lowerName = metric.toLowerCase();
-      if (lowerName.includes("pitch") || metric === config.pitchMetric)
-        pitchValue = latest.value;
-      else if (lowerName.includes("roll") || metric === config.rollMetric)
-        rollValue = latest.value;
-      else if (
-        lowerName.includes("yaw") ||
-        lowerName.includes("heading") ||
-        metric === config.yawMetric
-      )
-        yawValue = latest.value;
-    }
-    return { pitch: pitchValue, roll: rollValue, yaw: yawValue };
-  }, [data, metrics, config.pitchMetric, config.rollMetric, config.yawMetric]);
-
-  const hasTelemetryOrientation =
-    orientation.pitch !== 0 || orientation.roll !== 0 || orientation.yaw !== 0;
+  // Degrees for the HUD readout, whichever mode drives the model.
+  const displayOrientation = useMemo(() => {
+    if (!resolvedOrientation) return null;
+    return resolvedOrientation.kind === "quat"
+      ? quatToEulerYXZDeg(resolvedOrientation.quat)
+      : resolvedOrientation;
+  }, [resolvedOrientation]);
 
   // ── Body position in bin (x_bin, y_bin → bodyPosition) ─────────────
   const bodyPosition = useMemo((): [number, number, number] | undefined => {
@@ -457,15 +573,14 @@ export function Model3DPanel({
     const scale = config.positionScale ?? 0.9;
     if (!xMetric && !yMetric && !zMetric) return undefined;
     const get = (m?: string) => {
-      if (!m || !data[m]) return 0;
-      const arr = data[m];
-      const last = arr[arr.length - 1];
-      return last && typeof last.value === "number" ? last.value : 0;
+      if (!m) return 0;
+      const point = pointAt(data[m]);
+      return point && typeof point.value === "number" ? point.value : 0;
     };
     // Map raw metric values into scene units via positionScale (scene_units per raw_unit).
     // For the weevil: raw is meters in a 5.5m-radius bin, so scale ≈ 0.9 / 5.5.
     return [get(xMetric) * scale, get(zMetric) * scale, get(yMetric) * scale];
-  }, [data, config.positionXMetric, config.positionYMetric, config.positionZMetric, config.positionScale]);
+  }, [data, pointAt, config.positionXMetric, config.positionYMetric, config.positionZMetric, config.positionScale]);
 
   // For demo mode, always load as GLB; otherwise infer from URL
   const resolvedUrl = isDemoMode ? DEMO_MODEL_URL : modelUrl;
@@ -485,18 +600,34 @@ export function Model3DPanel({
   const t = demoTelemetry;
 
   return (
-    <div className="h-full w-full flex flex-col">
+    <div
+      className={`h-full w-full flex flex-col ${
+        isMetricDragOver ? "rounded-md ring-2 ring-inset ring-primary/60" : ""
+      }`}
+      onDragOver={acceptDrops ? handleMetricDragOver : undefined}
+      onDragLeave={acceptDrops ? handleMetricDragLeave : undefined}
+      onDrop={acceptDrops ? handleMetricDrop : undefined}
+    >
       <div className="flex-1 min-h-0 relative">
         <ModelViewer
           modelUrl={resolvedUrl}
           modelType={resolvedType}
           shape={shape}
-          orientationDeg={hasTelemetryOrientation ? orientation : undefined}
+          orientationDeg={
+            resolvedOrientation?.kind === "euler"
+              ? resolvedOrientation
+              : undefined
+          }
+          orientationQuat={
+            resolvedOrientation?.kind === "quat"
+              ? resolvedOrientation.quat
+              : undefined
+          }
           wireframe={wireframe}
           autoRotate={
             autoRotate && !hasTelemetryOrientation && !hoveredPart && !isEditing
           }
-          showGrid={config.showGrid ?? true}
+          showGrid={config.showGrid ?? shape !== "capsule"}
           backgroundColor={config.backgroundColor ?? "#111111"}
           width="100%"
           height="100%"
@@ -562,10 +693,35 @@ export function Model3DPanel({
           />
         )}
 
-        {isEditing && !clickSelection && (
+        {/* Drop-to-bind chooser — opens where a signal-rail drag landed. */}
+        {dropSelection && (
+          <DropBindPopover
+            metric={dropSelection.metric}
+            screen={dropSelection.screen}
+            config={config}
+            calloutEligible={discoveredParts.length > 0 || !!shape}
+            onSelect={applyDropBinding}
+            onDismiss={() => setDropSelection(null)}
+          />
+        )}
+
+        {/* Scrub chip — the model is showing the dashboard's time cursor,
+            not live data. Pinned = paused glyph; hover = transient. */}
+        {scrubTimestamp && hasTelemetryOrientation && (
+          <div className="absolute bottom-3 right-3 pointer-events-none rounded-md bg-background/95 backdrop-blur-sm border border-border px-2 py-1 text-[10px] font-mono flex items-center gap-1.5">
+            <span className="text-muted-foreground">
+              {pinnedTimestamp ? "⏸" : "↔"}
+            </span>
+            <span>{formatScrubTime(scrubTimestamp)}</span>
+          </div>
+        )}
+
+        {isEditing && !clickSelection && !dropSelection && (
           <div className="absolute top-2 right-2 z-10 pointer-events-none">
             <div className="rounded-md bg-background/95 backdrop-blur-sm border border-border px-2 py-1 text-[10px] text-muted-foreground">
-              Click a part to bind a metric
+              {discoveredParts.length > 0
+                ? "Click a part, or drop a signal to bind"
+                : "Drop a signal to bind orientation"}
             </div>
           </div>
         )}
@@ -619,13 +775,18 @@ export function Model3DPanel({
           </>
         ) : (
           <>
-            <span>{resolvedType.toUpperCase()}</span>
+            <span>
+              {shape ? shape.toUpperCase() : resolvedType.toUpperCase()}
+              {resolvedOrientation?.kind === "quat" && (
+                <span className="text-muted-foreground/50"> · QUAT</span>
+              )}
+            </span>
             <div className="flex items-center gap-3">
-              {hasTelemetryOrientation && (
+              {displayOrientation && (
                 <>
-                  <span>P:{orientation.pitch.toFixed(1)}&deg;</span>
-                  <span>R:{orientation.roll.toFixed(1)}&deg;</span>
-                  <span>Y:{orientation.yaw.toFixed(0)}&deg;</span>
+                  <span>P:{displayOrientation.pitch.toFixed(1)}&deg;</span>
+                  <span>R:{displayOrientation.roll.toFixed(1)}&deg;</span>
+                  <span>Y:{displayOrientation.yaw.toFixed(0)}&deg;</span>
                 </>
               )}
               {bindings.length > 0 && (
@@ -638,6 +799,127 @@ export function Model3DPanel({
           </>
         )}
       </div>
+    </div>
+  );
+}
+
+/** hh:mm:ss.mmm local time for the scrub chip. */
+function formatScrubTime(iso: string): string {
+  const d = new Date(iso);
+  const ms = String(d.getMilliseconds()).padStart(3, "0");
+  return `${d.toLocaleTimeString(undefined, { hour12: false })}.${ms}`;
+}
+
+/**
+ * Floating popover that opens where a signal-rail drag landed and lets the
+ * user pick which orientation slot (or a callout) the dropped metric binds
+ * to. Same viewport-clamped fixed-position pattern as ClickToBindPopover.
+ */
+function DropBindPopover({
+  metric,
+  screen,
+  config,
+  calloutEligible,
+  onSelect,
+  onDismiss,
+}: {
+  metric: string;
+  screen: { x: number; y: number };
+  config: Panel["config"];
+  calloutEligible: boolean;
+  onSelect: (slot: DropSlotKey | "callout") => void;
+  onDismiss: () => void;
+}) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const handle = (e: MouseEvent) => {
+      if (
+        containerRef.current &&
+        !containerRef.current.contains(e.target as Node)
+      ) {
+        onDismiss();
+      }
+    };
+    document.addEventListener("mousedown", handle);
+    return () => document.removeEventListener("mousedown", handle);
+  }, [onDismiss]);
+
+  const shortName = metric.includes(":") ? metric.split(":")[1] : metric;
+  const eulerSlots: DropSlotKey[] = ["pitchMetric", "rollMetric", "yawMetric"];
+  const quatSlots: DropSlotKey[] = [
+    "quatWMetric",
+    "quatXMetric",
+    "quatYMetric",
+    "quatZMetric",
+  ];
+
+  const slotButton = (slot: DropSlotKey) => {
+    const current = config[slot] as string | undefined;
+    return (
+      <button
+        key={slot}
+        type="button"
+        className="w-full text-left px-3 py-1.5 text-[11px] hover:bg-muted/60 transition-colors flex items-center justify-between gap-2"
+        onClick={() => onSelect(slot)}
+      >
+        <span>{DROP_SLOTS[slot]}</span>
+        {current && (
+          <span className="font-mono text-[9px] text-muted-foreground truncate max-w-[110px]">
+            {current.includes(":") ? current.split(":")[1] : current}
+          </span>
+        )}
+      </button>
+    );
+  };
+
+  return (
+    <div
+      ref={containerRef}
+      className="fixed z-50 rounded-md border border-border bg-background/95 backdrop-blur-sm shadow-md min-w-[200px] max-w-[260px]"
+      style={{
+        left: Math.min(screen.x + 12, window.innerWidth - 280),
+        top: Math.min(screen.y + 12, window.innerHeight - 360),
+      }}
+    >
+      <div className="px-3 py-2 border-b border-border">
+        <div className="text-[9px] uppercase tracking-wider text-muted-foreground">
+          Bind signal
+        </div>
+        <div className="text-[12px] font-mono font-semibold truncate">
+          {shortName}
+        </div>
+      </div>
+      <div className="max-h-80 overflow-y-auto py-1">
+        <div className="px-3 pt-1 pb-0.5 text-[9px] uppercase tracking-wider text-muted-foreground/70">
+          Orientation
+        </div>
+        {eulerSlots.map(slotButton)}
+        <div className="px-3 pt-2 pb-0.5 text-[9px] uppercase tracking-wider text-muted-foreground/70">
+          Quaternion
+        </div>
+        {quatSlots.map(slotButton)}
+        {calloutEligible && (
+          <>
+            <div className="px-3 pt-2 pb-0.5 text-[9px] uppercase tracking-wider text-muted-foreground/70">
+              Other
+            </div>
+            <button
+              type="button"
+              className="w-full text-left px-3 py-1.5 text-[11px] hover:bg-muted/60 transition-colors"
+              onClick={() => onSelect("callout")}
+            >
+              Floating callout
+            </button>
+          </>
+        )}
+      </div>
+      <button
+        type="button"
+        className="w-full px-3 py-1.5 text-[10px] text-muted-foreground hover:bg-muted/40 border-t border-border"
+        onClick={onDismiss}
+      >
+        Cancel
+      </button>
     </div>
   );
 }

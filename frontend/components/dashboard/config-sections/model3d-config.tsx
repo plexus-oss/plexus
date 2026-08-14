@@ -151,6 +151,9 @@ export function Model3DConfig({ config, onChange, metrics = [] }: Props) {
             <SelectItem value="cylinder" className="text-xs">
               Cylinder (built-in)
             </SelectItem>
+            <SelectItem value="capsule" className="text-xs">
+              Pod — capsule (built-in)
+            </SelectItem>
             <SelectItem value="box" className="text-xs">
               Box (built-in)
             </SelectItem>
@@ -219,6 +222,19 @@ export function Model3DConfig({ config, onChange, metrics = [] }: Props) {
             className="h-3 w-3"
           />
           Auto-rotate
+        </Label>
+        <Label className="flex items-center gap-2 text-[11px]">
+          <Checkbox
+            checked={
+              (config.showGrid as boolean | undefined) ??
+              config.shape !== "capsule"
+            }
+            onCheckedChange={(checked) =>
+              onChange({ showGrid: checked === true })
+            }
+            className="h-3 w-3"
+          />
+          Ground grid
         </Label>
       </div>
 
@@ -601,6 +617,46 @@ export function Model3DConfig({ config, onChange, metrics = [] }: Props) {
             </div>
           );
         })}
+        <Label className="text-[10px] text-muted-foreground uppercase tracking-wide pt-1 block">
+          Quaternion
+        </Label>
+        <p className="text-[10px] text-muted-foreground">
+          When all four are set, quaternion overrides pitch/roll/yaw.
+        </p>
+        {(
+          [
+            ["quatWMetric", "W"],
+            ["quatXMetric", "X"],
+            ["quatYMetric", "Y"],
+            ["quatZMetric", "Z"],
+          ] as const
+        ).map(([key, label]) => (
+          <div key={key}>
+            <Label className="text-[10px] text-muted-foreground">
+              {label}
+            </Label>
+            <Select
+              value={(config[key] as string) || "_none"}
+              onValueChange={(v) =>
+                onChange({ [key]: v === "_none" ? undefined : v })
+              }
+            >
+              <SelectTrigger className="h-7 text-xs mt-0.5">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="_none" className="text-xs">
+                  Not set
+                </SelectItem>
+                {metrics.map((m) => (
+                  <SelectItem key={m} value={m} className="text-xs">
+                    {m.includes(":") ? m.split(":")[1] : m}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+        ))}
       </div>
     </>
   );
