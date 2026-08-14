@@ -9,13 +9,16 @@ export function formatTimeInZone(
   date: Date,
   timezone: string,
   use12Hour: boolean = false,
-  showSeconds: boolean = false
+  showSeconds: boolean = false,
+  /** Sub-second digits ("12:04:31.25"); implies seconds. For deep chart zoom. */
+  fractionalSecondDigits?: 1 | 2 | 3
 ): string {
   return new Intl.DateTimeFormat("en-US", {
     timeZone: timezone,
     hour: "2-digit",
     minute: "2-digit",
-    second: showSeconds ? "2-digit" : undefined,
+    second: showSeconds || fractionalSecondDigits ? "2-digit" : undefined,
+    fractionalSecondDigits,
     hour12: use12Hour,
   }).format(date);
 }

@@ -29,3 +29,38 @@ export function canAcceptMetric(panel: Panel): boolean {
     panel.dataSource?.type !== "connection"
   );
 }
+
+// ── First-drop teaching hint ──
+// The signal rail shows a one-line drag hint until the user's first
+// successful metric drop, then never again. A miniature localStorage-backed
+// external store (same pattern as the rail's open state) so the rail can
+// read it via useSyncExternalStore and hide the hint live when a drop lands.
+const METRIC_DROPPED_KEY = "plexus.signal-rail.metric-dropped";
+const dropListeners = new Set<() => void>();
+
+/** True once any signal-rail drag has successfully landed (per browser). */
+export function hasDroppedMetric(): boolean {
+  try {
+    return localStorage.getItem(METRIC_DROPPED_KEY) === "1";
+  } catch {
+    // No storage → treat as seen so the hint never nags persistently.
+    return true;
+  }
+}
+
+/** Called by the drop handlers on a successful drop — hides the hint forever. */
+export function markMetricDropped(): void {
+  try {
+    localStorage.setItem(METRIC_DROPPED_KEY, "1");
+  } catch {
+    // best-effort persistence
+  }
+  for (const l of dropListeners) l();
+}
+
+export function subscribeMetricDropped(cb: () => void): () => void {
+  dropListeners.add(cb);
+  return () => {
+    dropListeners.delete(cb);
+  };
+}

@@ -1,6 +1,13 @@
 "use client";
 
-import { useMemo, useState, useEffect, useRef, useCallback } from "react";
+import {
+  Fragment,
+  useMemo,
+  useState,
+  useEffect,
+  useRef,
+  useCallback,
+} from "react";
 import { UnifiedChart } from "@/components/ui/charts/unified-chart";
 import { usePanelData } from "@/hooks/use-panel-data";
 import { PanelRestrictedState } from "./restricted-state";
@@ -14,13 +21,26 @@ import type {
   ConnectionDataSource,
 } from "@/lib/types/dashboard";
 import { getTimeRangeBounds } from "@/lib/types/dashboard";
-import { Table2, ChevronDown, ChevronUp, AlertTriangle, X } from "lucide-react";
+import {
+  Table2,
+  ChevronDown,
+  ChevronUp,
+  AlertTriangle,
+  HelpCircle,
+  X,
+} from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
   formatValue,
+  getNiceTimeInterval,
   getTicks,
   measureTextWidth,
 } from "@/components/ui/charts/base-chart";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
 import { formatPanelValue } from "@/lib/dashboard/format-value";
 import { formatDeltaMs } from "@/lib/dashboard/format-delta";
 import { Spinner } from "@/components/ui/spinner";
@@ -542,6 +562,19 @@ export function ChartPanel({
     return { start: start.getTime(), end: end.getTime() };
   }, [xDomain, timeRange]);
 
+  // Sub-second label precision at deep zoom, derived from the same tick
+  // ladder the axis renders (getNiceTimeInterval @ targetCount 6): steps ≥ 1s
+  // need no fraction, 100–500ms steps read with one digit ("31.2"), and
+  // 10–50ms steps need full ms so neighbors stay distinct ("31.240"/"31.250").
+  const xMsDigits = useMemo<0 | 1 | 3>(() => {
+    if (panel.config.xAxisField || !xDomain) return 0;
+    const rangeMs = xDomain[1] - xDomain[0];
+    if (rangeMs <= 0) return 0;
+    const tickMs = getNiceTimeInterval(rangeMs, 6);
+    if (tickMs >= 1000) return 0;
+    return tickMs >= 100 ? 1 : 3;
+  }, [panel.config.xAxisField, xDomain]);
+
   // Axis config
   const xAxisConfig = useMemo(() => {
     const isTimeAxis = !panel.config.xAxisField;
@@ -554,7 +587,8 @@ export function ChartPanel({
       innerW > 0 ? Math.max(1, Math.floor(innerW / APPROX_LABEL_PX)) : 1;
     const msPerLabel = maxLabels > 0 ? rangeMs / maxLabels : rangeMs;
     const showSeconds =
-      isTimeAxis && (rangeMs <= 15 * 60 * 1000 || msPerLabel <= 60 * 1000);
+      isTimeAxis &&
+      (rangeMs <= 15 * 60 * 1000 || msPerLabel <= 60 * 1000 || xMsDigits > 0);
     const tzAbbr = isTimeAxis ? getTimezoneAbbr(tz) : "";
     const baseLabel = panel.config.xAxisField
       ? panel.config.xAxisLabel ||
@@ -564,11 +598,21 @@ export function ChartPanel({
       : panel.config.xAxisLabel;
     return {
       domain: xDomain,
+      // "time" opts the axis into wall-clock-anchored ticks (base-chart's
+      // nice-interval ladder) instead of generic numeric 1/2/5 steps.
+      type: isTimeAxis ? ("time" as const) : undefined,
       formatter: panel.config.xAxisField
         ? (v: number) =>
             formatPanelValue(v, panel.config.decimals, panel.config.notation) ??
             v.toLocaleString()
-        : (v: number) => formatTimeInZone(new Date(v), tz, tz12, showSeconds),
+        : (v: number) =>
+            formatTimeInZone(
+              new Date(v),
+              tz,
+              tz12,
+              showSeconds,
+              xMsDigits || undefined,
+            ),
       label: isTimeAxis
         ? baseLabel
           ? `${baseLabel} (${tzAbbr})`
@@ -577,6 +621,7 @@ export function ChartPanel({
     };
   }, [
     xDomain,
+    xMsDigits,
     panel.config.xAxisField,
     panel.config.decimals,
     panel.config.notation,
@@ -1020,7 +1065,7 @@ export function ChartPanel({
                           transform: "translateX(-50%)",
                         }}
                       >
-                        {formatTimeInZone(new Date(tStart), tz, tz12)}
+                        {xAxisConfig.formatter(tStart)}
                       </div>
                       <div
                         className="absolute pointer-events-none z-20 text-[10px] font-mono px-1 py-0.5 rounded bg-background/90 border border-border text-foreground whitespace-nowrap"
@@ -1030,7 +1075,7 @@ export function ChartPanel({
                           transform: "translateX(-50%)",
                         }}
                       >
-                        {formatTimeInZone(new Date(tEnd), tz, tz12)}
+                        {xAxisConfig.formatter(tEnd)}
                       </div>
                     </>
                   )}
@@ -1131,7 +1176,14 @@ export function ChartPanel({
                   >
                     <div className="flex items-center gap-1.5 whitespace-nowrap font-mono text-[10px] text-muted-foreground">
                       <span>
-                        {formatTimeInZone(new Date(pinMs), tz, tz12, true)}
+                        {/* Same ms precision as the axis at deep zoom */}
+                        {formatTimeInZone(
+                          new Date(pinMs),
+                          tz,
+                          tz12,
+                          true,
+                          xMsDigits || undefined,
+                        )}
                       </span>
                       {deltaMs != null && (
                         <span className="text-primary">
@@ -1269,23 +1321,26 @@ export function ChartPanel({
               </span>
             )}
           </div>
-          <button
-            onClick={() => setShowTable(!showTable)}
-            className={cn(
-              "flex items-center gap-1.5 px-2 py-1 rounded text-xs transition-colors",
-              showTable
-                ? "text-foreground bg-muted"
-                : "text-muted-foreground hover:text-foreground hover:bg-muted/50",
-            )}
-          >
-            <Table2 className="h-3.5 w-3.5" />
-            <span>Data</span>
-            {showTable ? (
-              <ChevronUp className="h-3 w-3" />
-            ) : (
-              <ChevronDown className="h-3 w-3" />
-            )}
-          </button>
+          <div className="flex items-center gap-1">
+            <button
+              onClick={() => setShowTable(!showTable)}
+              className={cn(
+                "flex items-center gap-1.5 px-2 py-1 rounded text-xs transition-colors",
+                showTable
+                  ? "text-foreground bg-muted"
+                  : "text-muted-foreground hover:text-foreground hover:bg-muted/50",
+              )}
+            >
+              <Table2 className="h-3.5 w-3.5" />
+              <span>Data</span>
+              {showTable ? (
+                <ChevronUp className="h-3 w-3" />
+              ) : (
+                <ChevronDown className="h-3 w-3" />
+              )}
+            </button>
+            <ChartGesturesHelp />
+          </div>
         </div>
 
         {showTable && (
@@ -1327,5 +1382,58 @@ export function ChartPanel({
         onDelete={(id) => ann.deleteAnnotation(id)}
       />
     </>
+  );
+}
+
+/**
+ * Passive gesture cheatsheet — a muted `?` in the bottom toolbar opening a
+ * compact popover; user-invoked only, dismissed by click-away or Escape.
+ *
+ * Escape here cannot double as the chart's zoom-reset: Radix's dismissable
+ * layer handles Escape on document capture and calls preventDefault() before
+ * dismissing, and use-chart-pan-zoom's window listener already ignores
+ * defaultPrevented Escapes.
+ */
+const GESTURE_ROWS: Array<[gesture: string, action: string]> = [
+  ["Scroll", "Zoom"],
+  ["Drag", "Pan"],
+  ["Double-click", "Reset"],
+  ["Click", "Pin a moment"],
+  ["Shift+drag", "Zoom to selection"],
+  ["Annotate", "Mark a moment or range"],
+  ["Explain", "Ask the model"],
+];
+
+function ChartGesturesHelp() {
+  return (
+    <Popover>
+      <PopoverTrigger asChild>
+        <button
+          type="button"
+          aria-label="Chart gestures"
+          title="Chart gestures"
+          className="flex items-center px-2 py-1 rounded text-xs text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors"
+        >
+          <HelpCircle className="h-3.5 w-3.5" />
+        </button>
+      </PopoverTrigger>
+      <PopoverContent side="top" align="end" sideOffset={6} className="w-auto p-3">
+        <p className="mb-2 text-xs font-medium text-foreground">
+          Chart gestures
+        </p>
+        <div className="grid grid-cols-[auto_1fr] items-center gap-x-3 gap-y-1.5">
+          {GESTURE_ROWS.map(([gesture, action]) => (
+            <Fragment key={gesture}>
+              <kbd className="justify-self-start rounded border border-border bg-muted px-1 py-px font-mono text-[9px] text-muted-foreground">
+                {gesture}
+              </kbd>
+              <span className="whitespace-nowrap text-[11px] text-muted-foreground">
+                {action}
+              </span>
+            </Fragment>
+          ))}
+        </div>
+      </PopoverContent>
+    </Popover>
   );
 }

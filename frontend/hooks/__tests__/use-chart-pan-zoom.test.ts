@@ -1,5 +1,10 @@
 import { describe, it, expect } from "vitest";
-import { isOwnCommit } from "../use-chart-pan-zoom";
+import {
+  MIN_RANGE,
+  MAX_RANGE,
+  clampRange,
+  isOwnCommit,
+} from "../use-chart-pan-zoom";
 
 /**
  * The hook's DOM gesture wiring needs a browser; what IS unit-testable in
@@ -52,5 +57,28 @@ describe("isOwnCommit (pan-zoom reset baseline)", () => {
     expect(
       isOwnCommit({ type: "absolute", value: "not-a-date/also-not" }, { start, end }),
     ).toBe(false);
+  });
+});
+
+describe("clampRange (zoom span floor/ceiling)", () => {
+  it("floors at 10ms — deep enough to frame individual 500Hz-class samples", () => {
+    expect(MIN_RANGE).toBe(10);
+    expect(clampRange(0)).toBe(MIN_RANGE);
+    expect(clampRange(9)).toBe(MIN_RANGE);
+    expect(clampRange(-100)).toBe(MIN_RANGE);
+  });
+
+  it("passes sub-second and sub-10s spans through unclamped (old 10s floor is gone)", () => {
+    expect(clampRange(10)).toBe(10);
+    expect(clampRange(50)).toBe(50);
+    expect(clampRange(500)).toBe(500);
+    expect(clampRange(2_500)).toBe(2_500);
+    expect(clampRange(9_999)).toBe(9_999);
+  });
+
+  it("leaves ordinary spans untouched and caps at 90 days", () => {
+    expect(clampRange(15 * 60 * 1000)).toBe(15 * 60 * 1000);
+    expect(clampRange(MAX_RANGE)).toBe(MAX_RANGE);
+    expect(clampRange(MAX_RANGE + 1)).toBe(MAX_RANGE);
   });
 });

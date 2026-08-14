@@ -24,8 +24,22 @@ interface UseChartPanZoomOptions {
 }
 
 const DRAG_THRESHOLD = 4;
-const MIN_RANGE = 10 * 1000;
-const MAX_RANGE = 90 * 24 * 60 * 60 * 1000;
+/**
+ * Zoom floor: 10 ms — deep enough to frame individual samples of 500Hz-class
+ * data for close analysis. Spans under an hour are served raw (no rollup
+ * tier), so there is real per-sample data all the way down. Exported for
+ * unit tests.
+ */
+export const MIN_RANGE = 10;
+export const MAX_RANGE = 90 * 24 * 60 * 60 * 1000;
+
+/**
+ * Clamp a candidate zoom span (ms) to the supported range. Single clamp used
+ * by both the wheel-zoom and shift-drag brush paths. Exported for unit tests.
+ */
+export function clampRange(rangeMs: number): number {
+  return Math.max(MIN_RANGE, Math.min(MAX_RANGE, rangeMs));
+}
 
 /**
  * True when `range` is the absolute range this hook itself committed —
@@ -209,10 +223,7 @@ export function useChartPanZoom({
       const normalizedDelta =
         (Math.sign(e.deltaY) * Math.min(Math.abs(e.deltaY), 100)) / 100;
       const factor = 1 + normalizedDelta * 0.15;
-      const clampedRange = Math.max(
-        MIN_RANGE,
-        Math.min(MAX_RANGE, rangeMs * factor),
-      );
+      const clampedRange = clampRange(rangeMs * factor);
 
       const newStart = startMs + (rangeMs - clampedRange) * cursorX;
       const newEnd = newStart + clampedRange;
@@ -316,7 +327,7 @@ export function useChartPanZoom({
         const { start, end } = getCurrentBounds();
         const endTime = start + (curX / chartWidth) * (end - start);
         const [s, en] = startTime < endTime ? [startTime, endTime] : [endTime, startTime];
-        const range = Math.max(MIN_RANGE, Math.min(MAX_RANGE, en - s));
+        const range = clampRange(en - s);
         commitRange(s, s + range);
         return;
       }

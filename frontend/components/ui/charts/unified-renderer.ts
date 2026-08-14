@@ -359,8 +359,24 @@ export function createUnifiedWebGLRenderer(
 			switch (type) {
 				case "line": {
 					for (const s of series) {
-						if (s.data.length < 2) continue;
+						if (s.data.length === 0) continue;
 						const color = hexToRgb(s.color || "#6366f1");
+						// A lone point in the window (deep sub-second zoom over sparse
+						// data) has no segment to draw — render it as a dot so real
+						// data never reads as a blank chart.
+						if (s.data.length === 1) {
+							drawScatter(
+								createPointGeometry(
+									s.data,
+									xScale,
+									yScaleFlipped,
+									color,
+									(s.strokeWidth ?? 2) * 3,
+									s.opacity ?? 1,
+								),
+							);
+							continue;
+						}
 						drawLine(
 							createLineGeometry(
 								s.data,
@@ -379,8 +395,22 @@ export function createUnifiedWebGLRenderer(
 					const cumulativeY = new Map<number, number>();
 					// Draw fills
 					for (const s of series) {
-						if (s.data.length < 2) continue;
+						if (s.data.length === 0) continue;
 						const color = hexToRgb(s.color || "#6366f1");
+						// Single visible point: same dot fallback as the line case.
+						if (s.data.length === 1) {
+							drawScatter(
+								createPointGeometry(
+									s.data,
+									xScale,
+									yScaleFlipped,
+									color,
+									(s.strokeWidth ?? 2) * 3,
+									s.opacity ?? 1,
+								),
+							);
+							continue;
+						}
 						const baseline = Math.max(yDomain[0], s.baseline ?? yDomain[0]);
 						const previousY = stacked
 							? (x: number) => cumulativeY.get(x) ?? baseline
@@ -831,8 +861,33 @@ export function createUnifiedWebGPURenderer(
 				case "line": {
 					const pipe = getLinePipeline();
 					for (const s of series) {
-						if (s.data.length < 2) continue;
+						if (s.data.length === 0) continue;
 						const color = hexToRgb(s.color || "#6366f1");
+						// A lone point in the window (deep sub-second zoom over sparse
+						// data) has no segment to draw — render it as a dot so real
+						// data never reads as a blank chart.
+						if (s.data.length === 1) {
+							const dot = createPointGeometryQuads(
+								s.data,
+								xScale,
+								yScaleFlipped,
+								color,
+								(s.strokeWidth ?? 2) * 3,
+								s.opacity ?? 1,
+							);
+							if (dot.positions.length > 0) {
+								drawGeo(
+									getScatterPipeline(),
+									[
+										{ data: new Float32Array(dot.positions), slot: 0 },
+										{ data: new Float32Array(dot.colors), slot: 1 },
+										{ data: new Float32Array(dot.pointCoords), slot: 2 },
+									],
+									dot.positions.length / 2,
+								);
+							}
+							continue;
+						}
 						const geo = createLineGeometry(
 							s.data,
 							xScale,
@@ -861,8 +916,31 @@ export function createUnifiedWebGPURenderer(
 					const stdPipe = getStandardPipeline();
 					const cumulativeY = new Map<number, number>();
 					for (const s of series) {
-						if (s.data.length < 2) continue;
+						if (s.data.length === 0) continue;
 						const color = hexToRgb(s.color || "#6366f1");
+						// Single visible point: same dot fallback as the line case.
+						if (s.data.length === 1) {
+							const dot = createPointGeometryQuads(
+								s.data,
+								xScale,
+								yScaleFlipped,
+								color,
+								(s.strokeWidth ?? 2) * 3,
+								s.opacity ?? 1,
+							);
+							if (dot.positions.length > 0) {
+								drawGeo(
+									getScatterPipeline(),
+									[
+										{ data: new Float32Array(dot.positions), slot: 0 },
+										{ data: new Float32Array(dot.colors), slot: 1 },
+										{ data: new Float32Array(dot.pointCoords), slot: 2 },
+									],
+									dot.positions.length / 2,
+								);
+							}
+							continue;
+						}
 						const baseline = Math.max(yDomain[0], s.baseline ?? yDomain[0]);
 						const previousY = stacked
 							? (x: number) => cumulativeY.get(x) ?? baseline

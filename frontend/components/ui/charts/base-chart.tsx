@@ -280,8 +280,16 @@ export function getTicks(domain: [number, number], count: number): number[] {
 /**
  * Nice time intervals in milliseconds for axis ticks.
  * These are common intervals that produce clean time labels.
+ * The 1/2/5 sub-second rungs carry deep zoom (10ms–10s spans) down to the
+ * 10ms zoom floor, where individual 500Hz-class samples become resolvable.
  */
 const NICE_TIME_INTERVALS = [
+  10, // 10 milliseconds
+  20, // 20 milliseconds
+  50, // 50 milliseconds
+  100, // 100 milliseconds
+  200, // 200 milliseconds
+  500, // 500 milliseconds
   1000, // 1 second
   2000, // 2 seconds
   5000, // 5 seconds
@@ -300,6 +308,10 @@ const NICE_TIME_INTERVALS = [
   21600000, // 6 hours
   43200000, // 12 hours
   86400000, // 1 day
+  172800000, // 2 days
+  604800000, // 7 days
+  1209600000, // 14 days
+  2592000000, // 30 days
 ];
 
 /**
@@ -876,9 +888,16 @@ export function ChartRoot({
     [yDomainProp],
   );
 
+  // Time axes get wall-clock-anchored ticks from the nice-interval ladder
+  // (15s, 5m, … down to 10ms at deep zoom) instead of generic numeric 1/2/5
+  // steps over epoch-ms, so labels land on :00/:15/:30-style boundaries.
   const xTicks = React.useMemo(
-    () => xTicksProp || getTicks(xDomain, 6),
-    [xTicksProp, xDomain],
+    () =>
+      xTicksProp ||
+      (xAxis.type === "time"
+        ? getNiceTimeTicks(xDomain, 6)
+        : getTicks(xDomain, 6)),
+    [xTicksProp, xAxis.type, xDomain],
   );
   const yTicks = React.useMemo(
     () => yTicksProp || getTicks(yDomain, 6),

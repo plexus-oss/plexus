@@ -44,7 +44,11 @@ import {
 } from "@/lib/types/dashboard";
 import { toast } from "@/lib/toast-utils";
 import { SignalRail } from "@/components/dashboard/signal-rail";
-import { METRIC_DRAG_MIME, isMetricDrag } from "@/lib/dashboard/metric-dnd";
+import {
+  METRIC_DRAG_MIME,
+  isMetricDrag,
+  markMetricDropped,
+} from "@/lib/dashboard/metric-dnd";
 import { cn } from "@/lib/utils";
 import {
   LayoutDashboard,
@@ -323,7 +327,11 @@ export default function DashboardPage({ params }: DashboardPageProps) {
       e.preventDefault();
       setMetricDragOverEmpty(false);
       const metric = e.dataTransfer.getData(METRIC_DRAG_MIME);
-      if (metric) handleCreatePanelFromMetric(metric);
+      if (metric) {
+        handleCreatePanelFromMetric(metric);
+        // First successful drop retires the rail's teaching hint.
+        markMetricDropped();
+      }
     },
     [handleCreatePanelFromMetric],
   );

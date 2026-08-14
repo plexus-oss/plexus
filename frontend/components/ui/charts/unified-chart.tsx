@@ -45,6 +45,8 @@ export interface UnifiedChartProps {
 	xAxis?: {
 		label?: string;
 		domain?: [number, number] | "auto";
+		/** "time" renders wall-clock-anchored ticks (base-chart nice-interval ladder). */
+		type?: "number" | "time";
 		formatter?: (value: number) => string;
 	};
 	yAxis?: {
@@ -552,6 +554,8 @@ function Root({
 	xAxis?: {
 		label?: string;
 		domain?: [number, number] | "auto";
+		/** "time" renders wall-clock-anchored ticks (base-chart nice-interval ladder). */
+		type?: "number" | "time";
 		formatter?: (value: number) => string;
 	};
 	yAxis?: {

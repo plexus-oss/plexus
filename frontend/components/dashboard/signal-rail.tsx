@@ -12,7 +12,7 @@
  * The Add Panel modal stays the full-featured path; this rail is the fast one.
  */
 
-import { useMemo, useState } from "react";
+import { useMemo, useState, useSyncExternalStore } from "react";
 import { ChevronRight, Plus, Search, Wifi, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -33,7 +33,12 @@ import {
   tokenizeQuery,
   truncateMiddle,
 } from "@/lib/dashboard/metric-search";
-import { METRIC_DRAG_MIME, canAcceptMetric } from "@/lib/dashboard/metric-dnd";
+import {
+  METRIC_DRAG_MIME,
+  canAcceptMetric,
+  hasDroppedMetric,
+  subscribeMetricDropped,
+} from "@/lib/dashboard/metric-dnd";
 import type { Panel } from "@/lib/types/dashboard";
 import { getPanelDefinition } from "@/lib/panels/registry";
 
@@ -54,6 +59,14 @@ export function SignalRail({
   onClose,
 }: SignalRailProps) {
   const { sources, isLoading } = useMergedMetricsBySource();
+  // First-run teaching hint: shown until the first successful drop lands
+  // (drop handlers set the flag), then gone forever. Server snapshot "seen"
+  // avoids a hydration flash.
+  const dropSeen = useSyncExternalStore(
+    subscribeMetricDropped,
+    hasDroppedMetric,
+    () => true,
+  );
   const [search, setSearch] = useState("");
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   /** Qualified metric key whose "Add to…" menu is open (one at a time). */
@@ -175,13 +188,14 @@ export function SignalRail({
         )}
       </div>
 
-      {/* Hint */}
-      <div className="shrink-0 border-t border-border px-3 py-2">
-        <p className="text-[10px] leading-relaxed text-muted-foreground">
-          Drag a signal onto a chart to add it, or onto empty space for a new
-          panel.
-        </p>
-      </div>
+      {/* First-run hint — disappears forever after the first successful drop */}
+      {!dropSeen && (
+        <div className="shrink-0 border-t border-border px-3 py-2">
+          <p className="text-[10px] leading-relaxed text-muted-foreground">
+            Drag a signal onto a chart — or onto empty space for a new panel.
+          </p>
+        </div>
+      )}
     </div>
   );
 }

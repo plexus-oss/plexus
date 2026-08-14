@@ -21,6 +21,7 @@ import {
   METRIC_DRAG_MIME,
   canAcceptMetric,
   isMetricDrag,
+  markMetricDropped,
 } from "@/lib/dashboard/metric-dnd";
 
 interface DashboardGridProps {
@@ -345,6 +346,8 @@ export function DashboardGrid({
                     const metric = e.dataTransfer.getData(METRIC_DRAG_MIME);
                     if (metric && canAcceptMetric(panel)) {
                       onMetricDrop(panel.id, metric);
+                      // First successful drop retires the rail's teaching hint.
+                      markMetricDropped();
                     }
                   }
                 : undefined
