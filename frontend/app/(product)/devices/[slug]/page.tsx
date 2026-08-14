@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, use, useEffect, useRef, useMemo, useCallback } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -90,6 +90,7 @@ const noopConfigChange = () => {};
 export default function DeviceDetailPage({ params }: PageProps) {
   const { slug } = use(params);
   const router = useRouter();
+  const searchParams = useSearchParams();
 
   // Fire these in parallel — useSource resolves slug→Source, useDeviceSchema
   // hits the same endpoint with slug. Neither waits on the other.
@@ -122,6 +123,18 @@ export default function DeviceDetailPage({ params }: PageProps) {
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [showMetadata, setShowMetadata] = useState(false);
   const [showImportSheet, setShowImportSheet] = useState(false);
+
+  // Deep-link: /devices/[slug]?import=1 lands on Overview with the import
+  // sheet open (the add-device "Log file" flow navigates here). Consumed
+  // once via adjust-state-during-render so the sheet stays closable.
+  const importParam = searchParams.get("import") === "1";
+  const [importParamConsumed, setImportParamConsumed] = useState(false);
+  if (importParam && !importParamConsumed) {
+    setImportParamConsumed(true);
+    setActiveTab("overview");
+    setShowImportSheet(true);
+  }
+
   const { metricsBySource } = useAvailableMetrics();
   const { canEdit } = useRole();
 

@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useCallback, useEffect, useMemo } from "react";
+import { useRouter } from "next/navigation";
 import {
   Dialog,
   DialogContent,
@@ -31,6 +32,7 @@ import {
   Server,
   AppWindow,
   Timer,
+  FileUp,
 } from "lucide-react";
 import { usePlexusSession } from "@/hooks/use-plexus-session";
 import { useApiKeys, type ApiKey } from "@/hooks/use-api-keys";
@@ -57,6 +59,7 @@ type View =
   | "web-app"
   | "worker"
   | "satellite"
+  | "logfile"
   | "empty";
 
 interface AddDeviceModalProps {
@@ -125,6 +128,7 @@ export function AddDeviceModal({
   }>({ q: "", result: null });
 
   usePlexusSession();
+  const router = useRouter();
   const { keys, createKey } = useApiKeys();
   const { createSource, refresh: refreshSources } = useSources();
 
@@ -221,7 +225,10 @@ export function AddDeviceModal({
     }
   };
 
-  const handleCreateDevice = async (device_type?: string) => {
+  const handleCreateDevice = async (
+    device_type?: string,
+    opts?: { openImport?: boolean },
+  ) => {
     setIsCreating(true);
     try {
       const fresh = await refreshSources();
@@ -239,6 +246,10 @@ export function AddDeviceModal({
       }
       onSuccess(result);
       handleClose();
+      if (opts?.openImport) {
+        // Land on the device page with the import sheet auto-opened.
+        router.push(`/devices/${result.slug}?import=1`);
+      }
     } catch {
     } finally {
       setIsCreating(false);
@@ -378,6 +389,15 @@ export function AddDeviceModal({
         keywords: ["satellite", "norad", "orbit", "space", "tle"],
       },
       {
+        id: "logfile",
+        icon: <FileUp />,
+        title: "Log file",
+        subtitle: "ULog or CSV — import a flight or test log",
+        sectionId: "data",
+        onSelect: () => setView("logfile"),
+        keywords: ["ulog", "px4", "log", "csv", "import", "flight"],
+      },
+      {
         id: "empty",
         icon: <CircleDot />,
         title: "Empty device",
@@ -421,6 +441,8 @@ export function AddDeviceModal({
         return "Worker / cron";
       case "satellite":
         return "Add satellite";
+      case "logfile":
+        return "Log file";
       case "empty":
         return "Empty device";
       default:
@@ -514,6 +536,18 @@ export function AddDeviceModal({
                   slug={slug}
                   isCreating={isCreating}
                   onCreate={() => handleCreateDevice()}
+                />
+              )}
+
+              {view === "logfile" && (
+                <LogFileFlow
+                  name={query}
+                  setName={setQuery}
+                  slug={slug}
+                  isCreating={isCreating}
+                  onCreate={() =>
+                    handleCreateDevice(undefined, { openImport: true })
+                  }
                 />
               )}
 
@@ -1030,6 +1064,54 @@ function EmptyFlow({
         className="w-full"
       >
         {isCreating ? "Creating..." : "Create device"}
+      </Button>
+    </div>
+  );
+}
+
+// ═══ Log file flow ═══════════════════════════════════════════════════════════
+
+function LogFileFlow({
+  name,
+  setName,
+  slug,
+  isCreating,
+  onCreate,
+}: {
+  name: string;
+  setName: (v: string) => void;
+  slug: string;
+  isCreating: boolean;
+  onCreate: () => void;
+}) {
+  return (
+    <div className="space-y-5 min-w-0">
+      <p className="text-xs text-muted-foreground">
+        Creates the device this log belongs to, then opens the import sheet so
+        you can pick a ULog (.ulg) or CSV file. Files are parsed locally — the
+        log never leaves your machine.
+      </p>
+
+      <div className="space-y-2">
+        <Label className="text-xs text-muted-foreground">Device name</Label>
+        <Input
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          placeholder="e.g. quad-alpha, bench-rig-2"
+          autoFocus
+        />
+        <p className="text-xs text-muted-foreground">
+          Stored as ID:{" "}
+          <code className="rounded bg-muted px-1 py-0.5 font-mono">{slug}</code>
+        </p>
+      </div>
+
+      <Button
+        onClick={onCreate}
+        disabled={isCreating || !name.trim()}
+        className="w-full"
+      >
+        {isCreating ? "Creating..." : "Create & import log"}
       </Button>
     </div>
   );

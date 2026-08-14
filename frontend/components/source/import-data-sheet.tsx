@@ -33,8 +33,16 @@ import { FileUpload, type FileInfo } from "@/components/file-upload";
 import { toast } from "@/lib/toast-utils";
 import { useRuns } from "@/hooks/use-runs";
 import { parseCSV, previewCSV, type ParsedRow } from "@/lib/import/parser";
+import { parseUlog, UlogError, type ParsedUlog } from "@/lib/import/ulog";
 
 const MAX_FILE_MB = 50;
+/** ULog files parse in-memory (ArrayBuffer): hard cap 200 MB, warn above 50. */
+const ULOG_MAX_FILE_MB = 200;
+const ULOG_WARN_FILE_MB = 50;
+/** Topic-picker defaults: pre-check metrics with ≥ this many points… */
+const ULOG_PRECHECK_MIN_COUNT = 100;
+/** …capped at this many metrics (largest first). */
+const ULOG_PRECHECK_MAX = 40;
 /** Per-request cap of POST /api/import/telemetry (mirrors ingest's cap). */
 const API_BATCH_SIZE = 10_000;
 /** Sentinel for "wide" shape: every numeric column is its own metric. */
@@ -133,7 +141,10 @@ function detectMapping(
  * unstamped points land at epoch 1970 downstream (known bug class) and the
  * API rejects them anyway.
  */
-function normalizeRows(rows: ParsedRow[]): { rows: ParsedRow[]; dropped: number } {
+function normalizeRows(rows: ParsedRow[]): {
+  rows: ParsedRow[];
+  dropped: number;
+} {
   const out: ParsedRow[] = [];
   let dropped = 0;
   for (const row of rows) {
@@ -150,6 +161,26 @@ function normalizeRows(rows: ParsedRow[]): { rows: ParsedRow[]; dropped: number 
 }
 
 const formatTs = (ms: number) => format(new Date(ms), "yyyy-MM-dd HH:mm:ss");
+
+/** Compact value formatting for the ULog picker's min→max column. */
+function formatVal(v: number): string {
+  if (!Number.isFinite(v)) return "—";
+  if (Number.isInteger(v) && Math.abs(v) < 1e12) return v.toLocaleString();
+  const a = Math.abs(v);
+  if (a >= 1000) return v.toFixed(0);
+  if (a >= 1) return v.toFixed(2);
+  return v.toPrecision(3);
+}
+
+/** Default picker selection: count ≥ 100, capped at the 40 largest. */
+function defaultUlogSelection(parsed: ParsedUlog): Set<string> {
+  const eligible = [...parsed.metrics.entries()]
+    .filter(([, m]) => m.count >= ULOG_PRECHECK_MIN_COUNT)
+    .sort((a, b) => b[1].count - a[1].count)
+    .slice(0, ULOG_PRECHECK_MAX)
+    .map(([name]) => name);
+  return new Set(eligible);
+}
 
 interface ImportDataSheetProps {
   /** Slug of the device the points are imported into. */
@@ -172,6 +203,10 @@ export function ImportDataSheet({
   const [tsCol, setTsCol] = useState("");
   const [metricCol, setMetricCol] = useState<string>(WIDE);
   const [valueCol, setValueCol] = useState("");
+  // ULog path — replaces the CSV column-mapping step with a topic/field picker.
+  const [ulog, setUlog] = useState<ParsedUlog | null>(null);
+  const [ulogSelected, setUlogSelected] = useState<Set<string>>(new Set());
+  const [ulogSearch, setUlogSearch] = useState("");
   const [saveRun, setSaveRun] = useState(true);
   const [runName, setRunName] = useState("");
   const [importing, setImporting] = useState(false);
@@ -185,6 +220,9 @@ export function ImportDataSheet({
     setTsCol("");
     setMetricCol(WIDE);
     setValueCol("");
+    setUlog(null);
+    setUlogSelected(new Set());
+    setUlogSearch("");
   };
 
   const handleOpenChange = (next: boolean) => {
@@ -200,6 +238,35 @@ export function ImportDataSheet({
   const handleFiles = async (files: FileInfo[]) => {
     const info = files[0];
     if (!info) return;
+    if (/\.ulo?g$/i.test(info.name)) {
+      // ULog: parse locally (the file never leaves the machine).
+      if (info.size > ULOG_MAX_FILE_MB * 1024 * 1024) {
+        toast.error(`Log is too large — ${ULOG_MAX_FILE_MB} MB max`);
+        return;
+      }
+      if (info.size > ULOG_WARN_FILE_MB * 1024 * 1024) {
+        toast.warning("Large log — parsing in memory, this can take a moment");
+      }
+      try {
+        const buf = await info.file.arrayBuffer();
+        const result = parseUlog(buf, {
+          fileLastModifiedMs: info.file.lastModified,
+        });
+        if (result.metrics.size === 0) {
+          toast.error("No numeric telemetry found in this log");
+          return;
+        }
+        setFileName(info.name);
+        setUlog(result);
+        setUlogSelected(defaultUlogSelection(result));
+        setRunName(info.name.replace(/\.[^.]+$/, ""));
+      } catch (err) {
+        toast.error(
+          err instanceof UlogError ? err.message : "Failed to parse ULog file",
+        );
+      }
+      return;
+    }
     if (info.size > MAX_FILE_MB * 1024 * 1024) {
       toast.error(`CSV is too large — ${MAX_FILE_MB} MB max`);
       return;
@@ -271,16 +338,82 @@ export function ImportDataSheet({
     };
   }, [csvText, tsCol, metricCol, valueCol, numericCols, sourceSlug]);
 
-  const canImport =
-    !!parsed && parsed.rows.length > 0 && (!saveRun || runName.trim() !== "");
+  // ── ULog picker state ─────────────────────────────────────────────────────
+  // Full metric list sorted by point count desc (picker order).
+  const ulogMetrics = useMemo(() => {
+    if (!ulog) return [];
+    return [...ulog.metrics.entries()]
+      .map(([name, m]) => ({ name, count: m.count, min: m.min, max: m.max }))
+      .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name));
+  }, [ulog]);
+
+  const ulogFiltered = useMemo(() => {
+    const q = ulogSearch.trim().toLowerCase();
+    if (!q) return ulogMetrics;
+    return ulogMetrics.filter((m) => m.name.toLowerCase().includes(q));
+  }, [ulogMetrics, ulogSearch]);
+
+  // Footer stats for the current selection (counts only — rows materialize
+  // at import time so checkbox toggles stay cheap on multi-million-point logs).
+  const ulogStats = useMemo(() => {
+    if (!ulog) return { points: 0, start: 0, end: 0 };
+    let points = 0;
+    let start = Infinity;
+    let end = -Infinity;
+    for (const name of ulogSelected) {
+      const m = ulog.metrics.get(name);
+      if (!m || m.points.length === 0) continue;
+      points += m.count;
+      const first = m.points[0][0];
+      const last = m.points[m.points.length - 1][0];
+      if (first < start) start = first;
+      if (last > end) end = last;
+    }
+    return {
+      points,
+      start: start === Infinity ? 0 : start,
+      end: end === -Infinity ? 0 : end,
+    };
+  }, [ulog, ulogSelected]);
+
+  const toggleUlogMetric = (name: string, checked: boolean) => {
+    setUlogSelected((prev) => {
+      const next = new Set(prev);
+      if (checked) next.add(name);
+      else next.delete(name);
+      return next;
+    });
+  };
+
+  const canImport = ulog
+    ? ulogStats.points > 0 && (!saveRun || runName.trim() !== "")
+    : !!parsed && parsed.rows.length > 0 && (!saveRun || runName.trim() !== "");
+
+  /** Rows to POST, chronological — from the ULog selection or the CSV parse. */
+  const buildImportRows = (): ParsedRow[] => {
+    if (ulog) {
+      const rows: ParsedRow[] = [];
+      for (const name of ulogSelected) {
+        const m = ulog.metrics.get(name);
+        if (!m) continue;
+        for (const [timestamp, value] of m.points) {
+          rows.push({ metric: name, value, timestamp, source_id: sourceSlug });
+        }
+      }
+      rows.sort((a, b) => a.timestamp - b.timestamp);
+      return rows;
+    }
+    return parsed?.rows ?? [];
+  };
 
   const handleImport = async () => {
-    if (!parsed || parsed.rows.length === 0) return;
+    const rows = buildImportRows();
+    if (rows.length === 0) return;
     setImporting(true);
     try {
       const batches: ParsedRow[][] = [];
-      for (let i = 0; i < parsed.rows.length; i += API_BATCH_SIZE) {
-        batches.push(parsed.rows.slice(i, i + API_BATCH_SIZE));
+      for (let i = 0; i < rows.length; i += API_BATCH_SIZE) {
+        batches.push(rows.slice(i, i + API_BATCH_SIZE));
       }
       for (let i = 0; i < batches.length; i++) {
         setProgress({ i: i + 1, n: batches.length });
@@ -303,15 +436,15 @@ export function ImportDataSheet({
           throw new Error(body?.message || "Import failed");
         }
       }
-      toast.success(`Imported ${parsed.rows.length.toLocaleString()} points`);
+      toast.success(`Imported ${rows.length.toLocaleString()} points`);
       if (saveRun && runName.trim()) {
         try {
           await createRun({
             name: runName.trim(),
             source_id: sourceSlug,
             status: "completed",
-            started_at: new Date(parsed.start).toISOString(),
-            ended_at: new Date(parsed.end).toISOString(),
+            started_at: new Date(rows[0].timestamp).toISOString(),
+            ended_at: new Date(rows[rows.length - 1].timestamp).toISOString(),
           });
         } catch {
           // createRun already toasts its own failure; the points landed.
@@ -341,17 +474,17 @@ export function ImportDataSheet({
         <SheetHeader className="border-b border-border px-6 py-4">
           <SheetTitle className="font-mono text-sm">Import data</SheetTitle>
           <SheetDescription>
-            Upload a CSV of historical telemetry. Rows keep their original
-            timestamps.
+            Upload a CSV or PX4 ULog (.ulg) of historical telemetry. Files are
+            parsed locally and rows keep their original timestamps.
           </SheetDescription>
         </SheetHeader>
 
         <div className="flex-1 space-y-5 px-6 py-5">
-          {!csvText ? (
+          {!csvText && !ulog ? (
             <FileUpload
-              accept=".csv,text/csv"
+              accept=".csv,.ulg,text/csv"
               maxFiles={1}
-              maxSize={MAX_FILE_MB}
+              maxSize={ULOG_MAX_FILE_MB}
               onUpload={handleFiles}
             />
           ) : (
@@ -375,54 +508,130 @@ export function ImportDataSheet({
                 </Button>
               </div>
 
-              {/* Column mapping */}
-              <div className="space-y-3">
-                <Field label="Timestamp column">
-                  <Select value={tsCol} onValueChange={setTsCol}>
-                    <SelectTrigger size="sm" className="h-7 w-full text-xs">
-                      <SelectValue placeholder="Select a column" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {columns.map((c) => (
-                        <SelectItem key={c} value={c}>
-                          {c}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </Field>
+              {/* ULog topic/field picker */}
+              {ulog && (
+                <div className="space-y-3">
+                  <div className="space-y-1">
+                    <p className="text-xs text-muted-foreground">
+                      {ulog.meta.anchor === "gps"
+                        ? "Timestamps from GPS"
+                        : ulog.meta.anchor === "utc_ref"
+                          ? "Timestamps from UTC reference"
+                          : "Timestamps approximate — anchored to file date"}
+                      {ulog.meta.startMs > 0 && (
+                        <>
+                          {" "}
+                          · {formatTs(ulog.meta.startMs)} →{" "}
+                          {formatTs(ulog.meta.endMs)}
+                        </>
+                      )}
+                    </p>
+                    {(ulog.meta.partial ||
+                      ulog.meta.truncated ||
+                      ulog.meta.dropouts > 0 ||
+                      ulog.meta.droppedPreEpoch > 0 ||
+                      ulog.meta.unreadableMessages > 0) && (
+                      <p className="flex items-center gap-1 text-xs text-amber-600 dark:text-amber-500">
+                        <AlertTriangle className="h-3 w-3 shrink-0" />
+                        {[
+                          ulog.meta.partial && "file partially parsed",
+                          ulog.meta.truncated &&
+                            "point cap reached — log truncated",
+                          ulog.meta.dropouts > 0 &&
+                            `${ulog.meta.dropouts.toLocaleString()} dropouts`,
+                          ulog.meta.droppedPreEpoch > 0 &&
+                            `${ulog.meta.droppedPreEpoch.toLocaleString()} pre-2002 points dropped`,
+                          ulog.meta.unreadableMessages > 0 &&
+                            `${ulog.meta.unreadableMessages.toLocaleString()} unreadable messages skipped`,
+                        ]
+                          .filter(Boolean)
+                          .join(" · ")}
+                      </p>
+                    )}
+                  </div>
 
-                <Field label="Metric column">
-                  <Select value={metricCol} onValueChange={setMetricCol}>
-                    <SelectTrigger size="sm" className="h-7 w-full text-xs">
-                      <SelectValue placeholder="Select a column" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value={WIDE}>
-                        <span className="text-muted-foreground">
-                          Wide — one metric per column
+                  <Input
+                    value={ulogSearch}
+                    onChange={(e) => setUlogSearch(e.target.value)}
+                    placeholder="Filter metrics…"
+                    className="h-7 text-xs"
+                    disabled={importing}
+                  />
+
+                  <div className="max-h-72 divide-y divide-border/60 overflow-y-auto rounded-md border border-border">
+                    {ulogFiltered.map((m) => (
+                      <label
+                        key={m.name}
+                        className="flex cursor-pointer items-center gap-2 px-3 py-1.5 hover:bg-muted/40"
+                      >
+                        <Checkbox
+                          checked={ulogSelected.has(m.name)}
+                          onCheckedChange={(v) =>
+                            toggleUlogMetric(m.name, v === true)
+                          }
+                          disabled={importing}
+                        />
+                        <span className="min-w-0 flex-1 truncate font-mono text-xs">
+                          {m.name}
                         </span>
-                      </SelectItem>
-                      {columns
-                        .filter((c) => c !== tsCol)
-                        .map((c) => (
-                          <SelectItem key={c} value={c}>
-                            {c}
-                          </SelectItem>
-                        ))}
-                    </SelectContent>
-                  </Select>
-                </Field>
+                        <span className="shrink-0 font-mono text-[11px] text-muted-foreground">
+                          {m.count.toLocaleString()} · {formatVal(m.min)}→
+                          {formatVal(m.max)}
+                        </span>
+                      </label>
+                    ))}
+                    {ulogFiltered.length === 0 && (
+                      <p className="px-3 py-4 text-center text-xs text-muted-foreground">
+                        No metrics match
+                      </p>
+                    )}
+                  </div>
 
-                {metricCol !== WIDE && (
-                  <Field label="Value column">
-                    <Select value={valueCol} onValueChange={setValueCol}>
+                  <p className="text-xs text-muted-foreground">
+                    {ulogSelected.size} selected ·{" "}
+                    {ulogStats.points.toLocaleString()} points
+                    {ulogStats.points > 0 && (
+                      <>
+                        {" "}
+                        · {formatTs(ulogStats.start)} →{" "}
+                        {formatTs(ulogStats.end)}
+                      </>
+                    )}
+                  </p>
+                </div>
+              )}
+
+              {/* Column mapping (CSV) */}
+              {!ulog && (
+                <div className="space-y-3">
+                  <Field label="Timestamp column">
+                    <Select value={tsCol} onValueChange={setTsCol}>
                       <SelectTrigger size="sm" className="h-7 w-full text-xs">
                         <SelectValue placeholder="Select a column" />
                       </SelectTrigger>
                       <SelectContent>
+                        {columns.map((c) => (
+                          <SelectItem key={c} value={c}>
+                            {c}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </Field>
+
+                  <Field label="Metric column">
+                    <Select value={metricCol} onValueChange={setMetricCol}>
+                      <SelectTrigger size="sm" className="h-7 w-full text-xs">
+                        <SelectValue placeholder="Select a column" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value={WIDE}>
+                          <span className="text-muted-foreground">
+                            Wide — one metric per column
+                          </span>
+                        </SelectItem>
                         {columns
-                          .filter((c) => c !== tsCol && c !== metricCol)
+                          .filter((c) => c !== tsCol)
                           .map((c) => (
                             <SelectItem key={c} value={c}>
                               {c}
@@ -431,10 +640,29 @@ export function ImportDataSheet({
                       </SelectContent>
                     </Select>
                   </Field>
-                )}
-              </div>
 
-              {/* Preview */}
+                  {metricCol !== WIDE && (
+                    <Field label="Value column">
+                      <Select value={valueCol} onValueChange={setValueCol}>
+                        <SelectTrigger size="sm" className="h-7 w-full text-xs">
+                          <SelectValue placeholder="Select a column" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {columns
+                            .filter((c) => c !== tsCol && c !== metricCol)
+                            .map((c) => (
+                              <SelectItem key={c} value={c}>
+                                {c}
+                              </SelectItem>
+                            ))}
+                        </SelectContent>
+                      </Select>
+                    </Field>
+                  )}
+                </div>
+              )}
+
+              {/* Preview (CSV) */}
               {parsed && (
                 <div className="space-y-2">
                   <p className="text-xs text-muted-foreground">
