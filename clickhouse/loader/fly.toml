@@ -3,8 +3,8 @@
 #
 # Stateless. Reads `telemetry.stream:*` from gateway-redis via 6PN, writes
 # to plexus-ch via 6PN. No volume. Currently also exposes a temporary public
-# [http_service] on 8080 for the recording push (see the note above it and
-# TODO.md — reverting to internal-only is still an open task).
+# [http_service] on 8080 for the recording push (see the note above it —
+# reverting to internal-only is still an open task).
 #
 # ─── First-time setup ───────────────────────────────────────────────────
 #   fly apps create plexus-ch-loader --org plexus-725
@@ -18,8 +18,8 @@
 #
 # No volume, no Tigris. Purely stateless. Fly machine auto-restart
 # handles crashes; Redis PEL absorbs the ~20-30s ingest pause during
-# restart. See SCALING.md for the two-replica + XAUTOCLAIM path when
-# HA becomes a real requirement.
+# restart. If HA becomes a real requirement, the path is two replicas
+# with unique CONSUMER_NAMEs plus XAUTOCLAIM for stale PEL entries.
 #
 
 app = "plexus-ch-loader"
@@ -49,8 +49,8 @@ primary_region = "iad"
 # POST /recording is called by the Next.js frontend when a source's recording
 # status changes. The frontend now runs on Fly and reaches this loader over 6PN
 # (frontend PLEXUS_LOADER_URL -> plexus-ch-loader.internal:8080), so the old
-# Vercel-can't-reach-6PN justification for the public port no longer holds — see
-# TODO.md. Protected by x-internal-secret. The health GET / is also accessible
+# Vercel-can't-reach-6PN justification for the public port no longer holds.
+# Protected by x-internal-secret. The health GET / is also accessible
 # publicly; it exposes only operational metrics, no user data.
 [http_service]
   internal_port        = 8080

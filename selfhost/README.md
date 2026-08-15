@@ -19,17 +19,17 @@ by design. `./selfhost/install.sh upgrade` pulls the next version;
 
 ## What you get
 
-| Service | Container | Port |
-| --- | --- | --- |
-| App (dashboards, alerts, settings) | `frontend` | 3000 |
-| Telemetry ingest (WS/HTTP) | `gateway` | 8080 |
-| Read API | `api` | 8000 |
-| Alert engine | `houston` | — |
-| ClickHouse (+ Keeper) | `clickhouse`, `ch-keeper` | — |
-| Stream → ClickHouse loader | `ch-loader` | — |
-| Valkey (streams) | `valkey` | — |
-| Postgres (control plane) | `postgres` | — |
-| MinIO (cold tier + uploads; only with S3 tiering) | `minio` | — |
+| Service                                           | Container                 | Port |
+| ------------------------------------------------- | ------------------------- | ---- |
+| App (dashboards, alerts, settings)                | `frontend`                | 3000 |
+| Telemetry ingest (WS/HTTP)                        | `gateway`                 | 8080 |
+| Read API                                          | `api`                     | 8000 |
+| Alert engine                                      | `houston`                 | —    |
+| ClickHouse (+ Keeper)                             | `clickhouse`, `ch-keeper` | —    |
+| Stream → ClickHouse loader                        | `ch-loader`               | —    |
+| Valkey (streams)                                  | `valkey`                  | —    |
+| Postgres (control plane)                          | `postgres`                | —    |
+| MinIO (cold tier + uploads; only with S3 tiering) | `minio`                   | —    |
 
 Free for a single team with no caps: ingest, storage, dashboards,
 instruments, alerts, Grafana migration. Enterprise features (SSO, RBAC,
@@ -42,10 +42,10 @@ set `PLEXUS_LICENSE` in `.env`. Details: `../docs/licensing.md`.
   clauses (which manage shared-storage cost) are stripped at first boot —
   self-hosted telemetry, rollups, and events never expire. Bound disk
   yourself if you want to: `ALTER TABLE plexus.<table> MODIFY TTL
-  timestamp + INTERVAL 2 YEAR DELETE`. Like the storage policy, this is
+timestamp + INTERVAL 2 YEAR DELETE`. Like the storage policy, this is
   baked in at first boot; installs created before this change keep their
   old TTLs unless you `MODIFY TTL` them away (`ALTER TABLE plexus.<table>
-  REMOVE TTL` per table, or recreate the `ch_data` volume).
+REMOVE TTL` per table, or recreate the `ch_data` volume).
 - **S3 tiered storage (off by default):** answering "n" runs everything on
   local disk — no MinIO container and `storage_policy = 'default'`.
   Answering "y" adds MinIO and the hot→cold rollover (7-day hot tier
