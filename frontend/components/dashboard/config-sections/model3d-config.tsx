@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import { Eye, EyeOff, Trash2, Plus } from "lucide-react";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
@@ -10,13 +10,11 @@ import { Spinner } from "@/components/ui/spinner";
 import {
   Select,
   SelectContent,
-  SelectGroup,
   SelectItem,
-  SelectLabel,
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { useMergedMetricsBySource } from "@/hooks/use-merged-metrics";
+import { MetricCombobox } from "@/components/dashboard/metric-combobox";
 import {
   colorScales,
   type ColorScaleName,
@@ -54,62 +52,6 @@ export function Model3DConfig({ config, onChange, metrics = [] }: Props) {
     (config.modelLayerVisibility as Record<string, boolean> | undefined) ?? {};
   const isGltf = config.modelType === "gltf" || config.modelType === "glb";
   const modelUrl = config.modelUrl as string | undefined;
-
-  // Bindable metrics: the panel's own selection plus everything the
-  // discovery tree knows, source-qualified (`source:metric`, the same form
-  // the signal-rail drag payload uses) — so a panel added without metrics
-  // can still be bound entirely from this sidebar.
-  const { sources: discoveredSources } = useMergedMetricsBySource();
-  const metricGroups = useMemo(() => {
-    const groups: {
-      label: string;
-      options: { value: string; label: string }[];
-    }[] = [];
-    const seen = new Set<string>();
-    if (metrics.length > 0) {
-      groups.push({
-        label: "Panel metrics",
-        options: metrics.map((m) => {
-          seen.add(m);
-          return { value: m, label: m.includes(":") ? m.split(":")[1] : m };
-        }),
-      });
-    }
-    for (const s of discoveredSources) {
-      const options = s.metrics
-        .map((m) => ({ value: `${s.source_id}:${m}`, label: m }))
-        .filter((o) => !seen.has(o.value));
-      if (options.length > 0) groups.push({ label: s.source_id, options });
-    }
-    return groups;
-  }, [metrics, discoveredSources]);
-
-  const renderMetricItems = (current?: string) => {
-    const known =
-      !current ||
-      metricGroups.some((g) => g.options.some((o) => o.value === current));
-    return (
-      <>
-        {!known && current && (
-          <SelectItem value={current} className="text-xs">
-            {current.includes(":") ? current.split(":")[1] : current}
-          </SelectItem>
-        )}
-        {metricGroups.map((g) => (
-          <SelectGroup key={g.label}>
-            <SelectLabel className="text-[10px] text-muted-foreground">
-              {g.label}
-            </SelectLabel>
-            {g.options.map((o) => (
-              <SelectItem key={o.value} value={o.value} className="text-xs">
-                {o.label}
-              </SelectItem>
-            ))}
-          </SelectGroup>
-        ))}
-      </>
-    );
-  };
 
   const [discoverState, setDiscoverState] = useState<
     | { kind: "idle" }
@@ -381,24 +323,13 @@ export function Model3DConfig({ config, onChange, metrics = [] }: Props) {
                     <Trash2 className="h-3 w-3" />
                   </Button>
                 </div>
-                <Select
-                  value={b.metric || "_none"}
-                  onValueChange={(v) =>
-                    updateCalloutBinding(b.id, {
-                      metric: v === "_none" ? "" : v,
-                    })
+                <MetricCombobox
+                  value={b.metric || undefined}
+                  onChange={(v) =>
+                    updateCalloutBinding(b.id, { metric: v ?? "" })
                   }
-                >
-                  <SelectTrigger className="h-6 text-[11px]">
-                    <SelectValue placeholder="Metric" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="_none" className="text-xs">
-                      No metric
-                    </SelectItem>
-                    {renderMetricItems(b.metric)}
-                  </SelectContent>
-                </Select>
+                  emptyLabel="No metric"
+                />
               </div>
             );
           })}
@@ -564,22 +495,11 @@ export function Model3DConfig({ config, onChange, metrics = [] }: Props) {
                   &times;
                 </Button>
               </div>
-              <Select
-                value={binding.metric || "_none"}
-                onValueChange={(v) =>
-                  updateBinding(i, { metric: v === "_none" ? "" : v })
-                }
-              >
-                <SelectTrigger className="h-6 text-[11px]">
-                  <SelectValue placeholder="Metric" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="_none" className="text-xs">
-                    No metric
-                  </SelectItem>
-                  {renderMetricItems(binding.metric)}
-                </SelectContent>
-              </Select>
+              <MetricCombobox
+                value={binding.metric || undefined}
+                onChange={(v) => updateBinding(i, { metric: v ?? "" })}
+                emptyLabel="No metric"
+              />
               <div className="flex gap-2">
                 <div className="flex-1">
                   <Label className="text-[9px] text-muted-foreground">
@@ -645,22 +565,12 @@ export function Model3DConfig({ config, onChange, metrics = [] }: Props) {
               <Label className="text-[10px] text-muted-foreground">
                 {label}
               </Label>
-              <Select
-                value={(config[key] as string) || "_auto"}
-                onValueChange={(v) =>
-                  onChange({ [key]: v === "_auto" ? undefined : v })
-                }
-              >
-                <SelectTrigger className="h-7 text-xs mt-0.5">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="_auto" className="text-xs">
-                    Auto-detect
-                  </SelectItem>
-                  {renderMetricItems(config[key] as string | undefined)}
-                </SelectContent>
-              </Select>
+              <MetricCombobox
+                value={(config[key] as string) || undefined}
+                onChange={(v) => onChange({ [key]: v })}
+                emptyLabel="Auto-detect"
+                className="mt-0.5"
+              />
             </div>
           );
         })}
@@ -682,22 +592,12 @@ export function Model3DConfig({ config, onChange, metrics = [] }: Props) {
             <Label className="text-[10px] text-muted-foreground">
               {label}
             </Label>
-            <Select
-              value={(config[key] as string) || "_none"}
-              onValueChange={(v) =>
-                onChange({ [key]: v === "_none" ? undefined : v })
-              }
-            >
-              <SelectTrigger className="h-7 text-xs mt-0.5">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="_none" className="text-xs">
-                  Not set
-                </SelectItem>
-                {renderMetricItems(config[key] as string | undefined)}
-              </SelectContent>
-            </Select>
+            <MetricCombobox
+              value={(config[key] as string) || undefined}
+              onChange={(v) => onChange({ [key]: v })}
+              emptyLabel="Not set"
+              className="mt-0.5"
+            />
           </div>
         ))}
       </div>
