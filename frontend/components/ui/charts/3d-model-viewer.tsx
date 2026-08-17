@@ -216,6 +216,8 @@ function GltfModel() {
     hoveredPartName,
     visibilityMap,
     partColors,
+    hullGradient,
+    colorScale,
     partEmissive,
     partScales,
     partSpins,
@@ -559,6 +561,66 @@ function GltfModel() {
     visibilityMap,
     hoveredPartName,
   ]);
+
+  // Attitude gradient — paint every mesh with the color scale as a linear
+  // gradient along the model's longest axis (world space at load pose), so
+  // rotation reads as moving color on ANY loaded model, exactly like the
+  // built-in pod's hull gradient. Vertex colors multiply the base material,
+  // so textures still read through. Toggling off restores the material.
+  useEffect(() => {
+    if (!scene) return;
+    scene.updateMatrixWorld(true);
+    if (!hullGradient) {
+      scene.traverse((child) => {
+        const mesh = child as THREE.Mesh;
+        if (!mesh.isMesh) return;
+        const m = mesh.material as THREE.MeshStandardMaterial;
+        if (m?.vertexColors) {
+          m.vertexColors = false;
+          m.needsUpdate = true;
+        }
+      });
+      return;
+    }
+    const box = new THREE.Box3().setFromObject(scene);
+    const size = new THREE.Vector3();
+    box.getSize(size);
+    const axis: "x" | "y" | "z" =
+      size.x >= size.y && size.x >= size.z
+        ? "x"
+        : size.y >= size.z
+          ? "y"
+          : "z";
+    const min = box.min[axis];
+    const span = Math.max(size[axis], 1e-6);
+    const v = new THREE.Vector3();
+    const c = new THREE.Color();
+    scene.traverse((child) => {
+      const mesh = child as THREE.Mesh;
+      if (!mesh.isMesh || !mesh.geometry) return;
+      const pos = mesh.geometry.attributes.position;
+      if (!pos) return;
+      const colors = new Float32Array(pos.count * 3);
+      for (let i = 0; i < pos.count; i++) {
+        v.fromBufferAttribute(pos as THREE.BufferAttribute, i).applyMatrix4(
+          mesh.matrixWorld,
+        );
+        c.set(colorScale((v[axis] - min) / span));
+        colors[i * 3] = c.r;
+        colors[i * 3 + 1] = c.g;
+        colors[i * 3 + 2] = c.b;
+      }
+      mesh.geometry.setAttribute(
+        "color",
+        new THREE.BufferAttribute(colors, 3),
+      );
+      const m = mesh.material as THREE.MeshStandardMaterial;
+      if (m) {
+        m.vertexColors = true;
+        m.needsUpdate = true;
+      }
+    });
+  }, [scene, hullGradient, colorScale]);
 
   if (!scene) return null;
   return (

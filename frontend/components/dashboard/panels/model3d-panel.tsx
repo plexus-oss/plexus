@@ -643,7 +643,7 @@ export function Model3DPanel({
           visibilityMap={visibilityMap}
           partColors={partColors}
           modelColor={config.modelColor}
-          hullGradient={config.model3dHullGradient !== false}
+          hullGradient={config.model3dHullGradient ?? shape === "capsule"}
           colorScale={scale}
           partEmissive={partEmissive}
           partScales={config.partScales}

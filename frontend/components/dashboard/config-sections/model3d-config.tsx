@@ -401,32 +401,36 @@ export function Model3DConfig({ config, onChange, metrics = [] }: Props) {
           </div>
         )}
 
-      {/* Appearance (built-in shapes) */}
-      {config.shape != null && (
+      {/* Appearance (built-in shapes + GLTF/GLB models) */}
+      {(config.shape != null || isGltf || !modelUrl) && (
         <div className="px-3 py-2 border-b border-border space-y-2">
           <Label className="text-[10px] text-muted-foreground uppercase tracking-wide">
             Appearance
           </Label>
-          {config.shape === "capsule" && (
+          {(config.shape === "capsule" || isGltf || !config.shape) && (
             <>
               <Label className="flex items-center gap-2 text-[11px]">
                 <Checkbox
-                  checked={(config.model3dHullGradient as boolean) !== false}
+                  checked={
+                    (config.model3dHullGradient as boolean | undefined) ??
+                    config.shape === "capsule"
+                  }
                   onCheckedChange={(checked) =>
                     onChange({ model3dHullGradient: checked === true })
                   }
                   className="h-3 w-3"
                 />
-                Hull gradient
+                Attitude gradient
               </Label>
               <p className="text-[10px] text-muted-foreground">
-                Paints the hull with the color scale fore→aft so rotation
-                reads as moving color.
+                Paints the model with the color scale along its long axis so
+                rotation reads as moving color.
               </p>
             </>
           )}
-          {config.shape === "capsule" &&
-            (config.model3dHullGradient as boolean) !== false && (
+          {(config.shape === "capsule" || isGltf || !config.shape) &&
+            ((config.model3dHullGradient as boolean | undefined) ??
+              config.shape === "capsule") && (
               <div>
                 <Label className="text-[10px] text-muted-foreground">
                   Color scale
@@ -448,6 +452,7 @@ export function Model3DConfig({ config, onChange, metrics = [] }: Props) {
                 </Select>
               </div>
             )}
+          {config.shape != null && (
           <div>
             <Label className="text-[10px] text-muted-foreground">
               Hologram color
@@ -485,6 +490,7 @@ export function Model3DConfig({ config, onChange, metrics = [] }: Props) {
               })}
             </div>
           </div>
+          )}
         </div>
       )}
 
