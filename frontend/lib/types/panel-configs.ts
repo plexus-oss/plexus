@@ -128,6 +128,10 @@ export interface Model3DPanelConfig extends BasePanelConfig {
   quatZMetric?: string;
   model3dPartBindings?: Model3DPartBinding[];
   model3dColorScale?: ColorScaleName;
+  /** Base hologram tint for built-in primitive shapes. */
+  modelColor?: string;
+  /** Paint the pod hull with the color scale as a fore→aft gradient (default on). */
+  model3dHullGradient?: boolean;
   model3dAutoRange?: boolean;
   model3dMinValue?: number;
   model3dMaxValue?: number;

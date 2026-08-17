@@ -528,8 +528,8 @@ export function Model3DPanel({
       const sc = STATE_COLORS[state];
       colors[b.partName] = sc.color;
       emissive[b.partName] = sc;
-      // (The hidden scale variable below stays referenced via _ to satisfy lint.)
-      void manualMin; void manualMax; void autoRange; void scale;
+      // (Range knobs are currently unused — state colors, not value scaling.)
+      void manualMin; void manualMax; void autoRange;
     }
 
     return { partColors: colors, partEmissive: emissive };
@@ -540,7 +540,6 @@ export function Model3DPanel({
     bindings,
     data,
     pointAt,
-    scale,
     autoRange,
     manualMin,
     manualMax,
@@ -643,6 +642,9 @@ export function Model3DPanel({
           hoveredPartName={hoveredPart}
           visibilityMap={visibilityMap}
           partColors={partColors}
+          modelColor={config.modelColor}
+          hullGradient={config.model3dHullGradient !== false}
+          colorScale={scale}
           partEmissive={partEmissive}
           partScales={config.partScales}
           partSpins={config.partSpins}

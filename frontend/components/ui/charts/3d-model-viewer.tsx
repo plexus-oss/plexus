@@ -79,6 +79,13 @@ export interface ModelViewerProps {
   ) => void;
   /** Per-part color mapping (part name → hex/rgb color string) */
   partColors?: Record<string, string>;
+  /** Base tint for built-in primitive shapes (hologram wire / body color). */
+  modelColor?: string;
+  /**
+   * Paint the capsule hull with the color scale as a linear fore→aft
+   * gradient — rotation (especially roll) reads as moving color.
+   */
+  hullGradient?: boolean;
   /** Per-part emissive glow (part name → { color, intensity }) */
   partEmissive?: Record<string, { color: string; intensity: number }>;
   /** Per-part local scale multipliers (applied to named child nodes) */
@@ -130,6 +137,8 @@ interface ModelViewerContextType {
   hoveredPartName?: string | null;
   visibilityMap?: Record<string, boolean>;
   partColors?: Record<string, string>;
+  modelColor?: string;
+  hullGradient?: boolean;
   partEmissive?: Record<string, { color: string; intensity: number }>;
   partScales?: Record<string, number>;
   partSpins?: Record<string, { axis: "x" | "y" | "z"; speed: number }>;
@@ -760,7 +769,7 @@ const PRIMITIVE_PART_NAMES: Record<string, string[]> = {
   cylinder: ["body", "nose", "fin"],
   box: ["body", "nose", "fin"],
   cone: ["body", "nose", "fin"],
-  capsule: ["hull", ...CAPSULE_RACK_NAMES],
+  capsule: ["hull", ...CAPSULE_RACK_NAMES, "nose", "fin"],
 };
 
 function PrimitiveModel() {
@@ -770,6 +779,10 @@ function PrimitiveModel() {
     metalness,
     roughness,
     modelRotationOffset,
+    partColors,
+    modelColor,
+    hullGradient,
+    colorScale,
     onPartsDiscovered,
     onPartScreenPositions,
     onPartClick,
@@ -777,6 +790,32 @@ function PrimitiveModel() {
   } = useModelViewerData();
   const kind = shape ?? "cylinder";
   const groupRef = useRef<THREE.Group>(null);
+
+  // Capsule hull geometry, optionally vertex-colored with the color scale
+  // as a linear gradient along the long axis (local Y before the lie-on-
+  // side rotation). Shared by the shell and the wireframe overlay.
+  const hullGeometry = useMemo(() => {
+    const geo = new THREE.CapsuleGeometry(0.45, 1.3, 8, 24);
+    if (!hullGradient || kind !== "capsule") return geo;
+    const pos = geo.attributes.position;
+    const colors = new Float32Array(pos.count * 3);
+    const c = new THREE.Color();
+    const halfLength = 1.1; // 1.3/2 cylinder + 0.45 cap
+    for (let i = 0; i < pos.count; i++) {
+      const t = THREE.MathUtils.clamp(
+        (pos.getY(i) + halfLength) / (2 * halfLength),
+        0,
+        1,
+      );
+      c.set(colorScale(t));
+      colors[i * 3] = c.r;
+      colors[i * 3 + 1] = c.g;
+      colors[i * 3 + 2] = c.b;
+    }
+    geo.setAttribute("color", new THREE.BufferAttribute(colors, 3));
+    return geo;
+  }, [hullGradient, kind, colorScale]);
+  useEffect(() => () => hullGeometry.dispose(), [hullGeometry]);
 
   // Announce named parts so config UIs and drop-to-bind callouts see them.
   useEffect(() => {
@@ -834,56 +873,88 @@ function PrimitiveModel() {
   });
 
   if (kind === "capsule") {
-    // Lying along X. Hull rendered twice: translucent shell + dense green
+    // Lying along X. Hull rendered twice: translucent shell + dense
     // wireframe overlay (the hologram look), racks visible through it.
+    // Part-binding state colors override the base tint per part; the
+    // amber nose + dorsal stripe break the hull's rotational symmetry
+    // so roll (and fore/aft) read at a glance.
     const lieOnSide: [number, number, number] = [0, 0, Math.PI / 2];
+    const wire = modelColor ?? HOLO_WIRE;
+    const hullTint = partColors?.hull;
+    const gradient = hullGradient && !hullTint;
     return (
       <group ref={groupRef} rotation={modelRotationOffset ?? [0, 0, 0]}>
-        <mesh name="hull" rotation={lieOnSide} {...partEvents("hull")}>
-          <capsuleGeometry args={[0.45, 1.3, 8, 24]} />
+        <mesh
+          name="hull"
+          rotation={lieOnSide}
+          geometry={hullGeometry}
+          {...partEvents("hull")}
+        >
           <meshStandardMaterial
-            color="#0c1210"
+            key={gradient ? "hull-grad" : "hull-solid"}
+            color={gradient ? "#ffffff" : (hullTint ?? "#0c1210")}
+            vertexColors={gradient}
             transparent
-            opacity={0.32}
+            opacity={gradient ? 0.22 : 0.32}
             depthWrite={false}
             roughness={roughness}
             metalness={metalness}
           />
         </mesh>
-        <mesh rotation={lieOnSide}>
-          <capsuleGeometry args={[0.45, 1.3, 8, 24]} />
+        <mesh rotation={lieOnSide} geometry={hullGeometry}>
           <meshBasicMaterial
-            color={HOLO_WIRE}
+            key={gradient ? "wire-grad" : "wire-solid"}
+            color={gradient ? "#ffffff" : (hullTint ?? wire)}
+            vertexColors={gradient}
             wireframe
             transparent
-            opacity={0.28}
+            opacity={gradient ? 0.55 : 0.28}
           />
         </mesh>
-        {CAPSULE_RACK_XS.map((x, i) => (
-          <group key={CAPSULE_RACK_NAMES[i]} position={[x, 0, 0]}>
-            <mesh
-              name={CAPSULE_RACK_NAMES[i]}
-              rotation={lieOnSide}
-              {...partEvents(CAPSULE_RACK_NAMES[i])}
-            >
-              <cylinderGeometry args={[0.36, 0.36, 0.08, 24]} />
-              <meshStandardMaterial
-                color="#102415"
-                transparent
-                opacity={0.55}
-              />
-            </mesh>
-            <mesh rotation={lieOnSide}>
-              <cylinderGeometry args={[0.36, 0.36, 0.08, 24]} />
-              <meshBasicMaterial
-                color={HOLO_WIRE}
-                wireframe
-                transparent
-                opacity={0.5}
-              />
-            </mesh>
-          </group>
-        ))}
+        {CAPSULE_RACK_XS.map((x, i) => {
+          const rackTint = partColors?.[CAPSULE_RACK_NAMES[i]];
+          return (
+            <group key={CAPSULE_RACK_NAMES[i]} position={[x, 0, 0]}>
+              <mesh
+                name={CAPSULE_RACK_NAMES[i]}
+                rotation={lieOnSide}
+                {...partEvents(CAPSULE_RACK_NAMES[i])}
+              >
+                <cylinderGeometry args={[0.36, 0.36, 0.08, 24]} />
+                <meshStandardMaterial
+                  color={rackTint ?? "#102415"}
+                  transparent
+                  opacity={0.55}
+                />
+              </mesh>
+              <mesh rotation={lieOnSide}>
+                <cylinderGeometry args={[0.36, 0.36, 0.08, 24]} />
+                <meshBasicMaterial
+                  color={rackTint ?? wire}
+                  wireframe
+                  transparent
+                  opacity={0.5}
+                />
+              </mesh>
+            </group>
+          );
+        })}
+        {/* Fore marker — makes yaw direction and pitch sign legible */}
+        <mesh name="nose" position={[1.05, 0, 0]} {...partEvents("nose")}>
+          <sphereGeometry args={[0.09, 24, 16]} />
+          <meshStandardMaterial
+            color={partColors?.nose ?? "#f59e0b"}
+            roughness={0.4}
+          />
+        </mesh>
+        {/* Dorsal stripe — breaks roll symmetry */}
+        <mesh name="fin" position={[0, 0.465, 0]} {...partEvents("fin")}>
+          <boxGeometry args={[1.3, 0.03, 0.09]} />
+          <meshStandardMaterial
+            color={partColors?.fin ?? "#f59e0b"}
+            roughness={0.4}
+          />
+        </mesh>
       </group>
     );
   }
@@ -902,7 +973,7 @@ function PrimitiveModel() {
           <coneGeometry args={[0.75, 2, 48]} />
         )}
         <meshStandardMaterial
-          color="#94a3b8"
+          color={partColors?.body ?? modelColor ?? "#94a3b8"}
           wireframe={wireframe}
           metalness={metalness}
           roughness={roughness}
@@ -911,7 +982,10 @@ function PrimitiveModel() {
       {/* Nose cap — makes pitch/roll legible */}
       <mesh name="nose" position={[0, dims.noseY, 0]} {...partEvents("nose")}>
         <sphereGeometry args={[0.16, 24, 16]} />
-        <meshStandardMaterial color="#f59e0b" roughness={0.4} />
+        <meshStandardMaterial
+          color={partColors?.nose ?? "#f59e0b"}
+          roughness={0.4}
+        />
       </mesh>
       {/* Heading fin — makes yaw legible on a symmetric body */}
       <mesh
@@ -920,7 +994,10 @@ function PrimitiveModel() {
         {...partEvents("fin")}
       >
         <boxGeometry args={[0.05, 0.65, 0.3]} />
-        <meshStandardMaterial color="#f59e0b" roughness={0.4} />
+        <meshStandardMaterial
+          color={partColors?.fin ?? "#f59e0b"}
+          roughness={0.4}
+        />
       </mesh>
     </group>
   );
@@ -1145,6 +1222,8 @@ function Root({
   hoveredPartName,
   visibilityMap,
   partColors,
+  modelColor,
+  hullGradient = false,
   partEmissive,
   partScales,
   partSpins,
@@ -1186,6 +1265,8 @@ function Root({
     hoveredPartName,
     visibilityMap,
     partColors,
+    modelColor,
+    hullGradient,
     partEmissive,
     partScales,
     partSpins,

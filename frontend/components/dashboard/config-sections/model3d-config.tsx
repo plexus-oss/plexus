@@ -401,65 +401,92 @@ export function Model3DConfig({ config, onChange, metrics = [] }: Props) {
           </div>
         )}
 
-      {/* Color Scale */}
-      <div className="px-3 py-2 border-b border-border space-y-2">
-        <Label className="text-[10px] text-muted-foreground uppercase tracking-wide">
-          Color Scale
-        </Label>
-        <Select
-          value={(config.model3dColorScale as string) || "viridis"}
-          onValueChange={(v) => onChange({ model3dColorScale: v })}
-        >
-          <SelectTrigger className="h-7 text-xs">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            {COLOR_SCALE_OPTIONS.map((name) => (
-              <SelectItem key={name} value={name} className="text-xs">
-                {name}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-        <Label className="flex items-center gap-2 text-[11px]">
-          <Checkbox
-            checked={(config.model3dAutoRange as boolean) !== false}
-            onCheckedChange={(checked) =>
-              onChange({ model3dAutoRange: checked === true })
-            }
-            className="h-3 w-3"
-          />
-          Auto range
-        </Label>
-        {config.model3dAutoRange === false && (
-          <div className="flex gap-2">
-            <div className="flex-1">
-              <Label className="text-[10px] text-muted-foreground">Min</Label>
-              <Input
-                type="number"
-                value={(config.model3dMinValue as number) ?? 0}
-                onChange={(e) =>
-                  onChange({ model3dMinValue: parseFloat(e.target.value) || 0 })
-                }
-                className="h-7 text-xs mt-0.5"
-              />
-            </div>
-            <div className="flex-1">
-              <Label className="text-[10px] text-muted-foreground">Max</Label>
-              <Input
-                type="number"
-                value={(config.model3dMaxValue as number) ?? 100}
-                onChange={(e) =>
-                  onChange({
-                    model3dMaxValue: parseFloat(e.target.value) || 100,
-                  })
-                }
-                className="h-7 text-xs mt-0.5"
-              />
+      {/* Appearance (built-in shapes) */}
+      {config.shape != null && (
+        <div className="px-3 py-2 border-b border-border space-y-2">
+          <Label className="text-[10px] text-muted-foreground uppercase tracking-wide">
+            Appearance
+          </Label>
+          {config.shape === "capsule" && (
+            <>
+              <Label className="flex items-center gap-2 text-[11px]">
+                <Checkbox
+                  checked={(config.model3dHullGradient as boolean) !== false}
+                  onCheckedChange={(checked) =>
+                    onChange({ model3dHullGradient: checked === true })
+                  }
+                  className="h-3 w-3"
+                />
+                Hull gradient
+              </Label>
+              <p className="text-[10px] text-muted-foreground">
+                Paints the hull with the color scale fore→aft so rotation
+                reads as moving color.
+              </p>
+            </>
+          )}
+          {config.shape === "capsule" &&
+            (config.model3dHullGradient as boolean) !== false && (
+              <div>
+                <Label className="text-[10px] text-muted-foreground">
+                  Color scale
+                </Label>
+                <Select
+                  value={(config.model3dColorScale as string) || "viridis"}
+                  onValueChange={(v) => onChange({ model3dColorScale: v })}
+                >
+                  <SelectTrigger className="h-7 text-xs mt-0.5">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {COLOR_SCALE_OPTIONS.map((name) => (
+                      <SelectItem key={name} value={name} className="text-xs">
+                        {name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
+          <div>
+            <Label className="text-[10px] text-muted-foreground">
+              Hologram color
+            </Label>
+            <div className="flex gap-1.5 mt-1">
+              {[
+                ["#22c55e", "Green"],
+                ["#22d3ee", "Cyan"],
+                ["#f59e0b", "Amber"],
+                ["#a78bfa", "Violet"],
+                ["#fb7185", "Rose"],
+                ["#e2e8f0", "White"],
+              ].map(([hex, label]) => {
+                const active =
+                  (config.modelColor ?? "#22c55e") === hex;
+                return (
+                  <button
+                    key={hex}
+                    type="button"
+                    title={label}
+                    onClick={() =>
+                      onChange({
+                        modelColor: hex === "#22c55e" ? undefined : hex,
+                      })
+                    }
+                    className={
+                      "h-5 w-5 rounded-full border transition-shadow " +
+                      (active
+                        ? "ring-2 ring-offset-1 ring-offset-background ring-primary/60 border-transparent"
+                        : "border-border hover:scale-110")
+                    }
+                    style={{ backgroundColor: hex }}
+                  />
+                );
+              })}
             </div>
           </div>
-        )}
-      </div>
+        </div>
+      )}
 
       {/* Part Bindings (GLTF/GLB only, or demo mode) */}
       {(isGltf || !config.modelUrl) && (
