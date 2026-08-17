@@ -1139,7 +1139,7 @@ export function ChartPanel({
 
           {streamRateHz !== null && (
             <div
-              className="absolute top-2 right-2 z-10 pointer-events-none text-[9px] font-mono px-1.5 py-0.5 rounded bg-background/70 text-muted-foreground border border-border/50"
+              className="absolute bottom-14 right-2 z-10 pointer-events-none text-[9px] font-mono px-1.5 py-0.5 rounded bg-background/70 text-muted-foreground border border-border/50"
               title="Observed ingest rate over the visible window"
             >
               avg{" "}

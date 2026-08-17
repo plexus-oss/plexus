@@ -423,8 +423,8 @@ export function Model3DConfig({ config, onChange, metrics = [] }: Props) {
                 Attitude gradient
               </Label>
               <p className="text-[10px] text-muted-foreground">
-                Paints the model with the color scale along its long axis so
-                rotation reads as moving color.
+                Paints the model with the color scale across its hull so
+                rotation — especially roll — reads as moving color.
               </p>
             </>
           )}

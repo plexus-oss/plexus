@@ -563,10 +563,13 @@ function GltfModel() {
   ]);
 
   // Attitude gradient — paint every mesh with the color scale as a linear
-  // gradient along the model's longest axis (world space at load pose), so
-  // rotation reads as moving color on ANY loaded model, exactly like the
-  // built-in pod's hull gradient. Vertex colors multiply the base material,
-  // so textures still read through. Toggling off restores the material.
+  // gradient along the model's SHORTEST axis (world space at load pose).
+  // Shortest, not longest: elongated vehicles are near-symmetric about
+  // their long axis, so a lengthwise gradient never moves under roll —
+  // the cross-axis bands sweep visibly instead, exactly like the built-in
+  // pod's vertical hull gradient. Vertex colors multiply the base
+  // material, so textures still read through. Toggling off restores the
+  // original material.
   useEffect(() => {
     if (!scene) return;
     scene.updateMatrixWorld(true);
@@ -586,9 +589,9 @@ function GltfModel() {
     const size = new THREE.Vector3();
     box.getSize(size);
     const axis: "x" | "y" | "z" =
-      size.x >= size.y && size.x >= size.z
+      size.x <= size.y && size.x <= size.z
         ? "x"
-        : size.y >= size.z
+        : size.y <= size.z
           ? "y"
           : "z";
     const min = box.min[axis];
@@ -831,7 +834,7 @@ const PRIMITIVE_PART_NAMES: Record<string, string[]> = {
   cylinder: ["body", "nose", "fin"],
   box: ["body", "nose", "fin"],
   cone: ["body", "nose", "fin"],
-  capsule: ["hull", ...CAPSULE_RACK_NAMES, "nose", "fin"],
+  capsule: ["hull", ...CAPSULE_RACK_NAMES],
 };
 
 function PrimitiveModel() {
@@ -854,18 +857,21 @@ function PrimitiveModel() {
   const groupRef = useRef<THREE.Group>(null);
 
   // Capsule hull geometry, optionally vertex-colored with the color scale
-  // as a linear gradient along the long axis (local Y before the lie-on-
-  // side rotation). Shared by the shell and the wireframe overlay.
+  // as a vertical (dorsal→ventral) gradient. Deliberately ACROSS the hull,
+  // not along it: roll is rotation about the long axis, so a fore→aft
+  // gradient never moves under roll — the vertical bands sweep around the
+  // hull instead, which is what makes roll legible. In the capsule's local
+  // frame (before the lie-on-side Z rotation) world-up is local X.
   const hullGeometry = useMemo(() => {
     const geo = new THREE.CapsuleGeometry(0.45, 1.3, 8, 24);
     if (!hullGradient || kind !== "capsule") return geo;
     const pos = geo.attributes.position;
     const colors = new Float32Array(pos.count * 3);
     const c = new THREE.Color();
-    const halfLength = 1.1; // 1.3/2 cylinder + 0.45 cap
+    const radius = 0.45;
     for (let i = 0; i < pos.count; i++) {
       const t = THREE.MathUtils.clamp(
-        (pos.getY(i) + halfLength) / (2 * halfLength),
+        (pos.getX(i) / radius + 1) / 2,
         0,
         1,
       );
@@ -938,8 +944,7 @@ function PrimitiveModel() {
     // Lying along X. Hull rendered twice: translucent shell + dense
     // wireframe overlay (the hologram look), racks visible through it.
     // Part-binding state colors override the base tint per part; the
-    // amber nose + dorsal stripe break the hull's rotational symmetry
-    // so roll (and fore/aft) read at a glance.
+    // vertical hull gradient (see hullGeometry) is what makes roll read.
     const lieOnSide: [number, number, number] = [0, 0, Math.PI / 2];
     const wire = modelColor ?? HOLO_WIRE;
     const hullTint = partColors?.hull;
@@ -1001,22 +1006,6 @@ function PrimitiveModel() {
             </group>
           );
         })}
-        {/* Fore marker — makes yaw direction and pitch sign legible */}
-        <mesh name="nose" position={[1.05, 0, 0]} {...partEvents("nose")}>
-          <sphereGeometry args={[0.09, 24, 16]} />
-          <meshStandardMaterial
-            color={partColors?.nose ?? "#f59e0b"}
-            roughness={0.4}
-          />
-        </mesh>
-        {/* Dorsal stripe — breaks roll symmetry */}
-        <mesh name="fin" position={[0, 0.465, 0]} {...partEvents("fin")}>
-          <boxGeometry args={[1.3, 0.03, 0.09]} />
-          <meshStandardMaterial
-            color={partColors?.fin ?? "#f59e0b"}
-            roughness={0.4}
-          />
-        </mesh>
       </group>
     );
   }
