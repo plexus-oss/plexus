@@ -627,7 +627,7 @@ export function Model3DPanel({
             autoRotate && !hasTelemetryOrientation && !hoveredPart && !isEditing
           }
           showGrid={config.showGrid ?? shape !== "capsule"}
-          backgroundColor={config.backgroundColor ?? "#111111"}
+          backgroundColor={config.backgroundColor ?? "transparent"}
           width="100%"
           height="100%"
           onPartsDiscovered={onPartsDiscovered}

@@ -433,9 +433,11 @@ function GltfModel() {
       const mat = mesh.material as THREE.MeshStandardMaterial;
       if (!mat?.color) return;
 
-      // Clone material once; stash original color for blending
+      // Clone material once; stash originals for blending / restore
       if (!mesh.userData._cloned) {
         mesh.userData._originalColor = mat.color.clone();
+        mesh.userData._originalOpacity = mat.opacity;
+        mesh.userData._originalTransparent = mat.transparent;
         mesh.material = mat.clone();
         mesh.userData._cloned = true;
 
@@ -498,7 +500,12 @@ function GltfModel() {
       // Wireframe mode: lines colored by the same heatmap data the
       // solid path uses. Threshold > data > white. Keeps the engineered
       // see-inside look while still showing telemetry through color.
+      // Force full opacity — hologram-style GLBs (e.g. the exported pod)
+      // use near-transparent shells whose wireframe would otherwise be
+      // invisible, making the toggle look broken.
       if (wireframe) {
+        cloned.opacity = 1;
+        cloned.transparent = false;
         if (threshold) {
           cloned.color.set(threshold.color);
           cloned.emissive.set(threshold.color);
@@ -522,6 +529,8 @@ function GltfModel() {
       } else {
         const edgeLine = mesh.userData._edges as THREE.LineSegments | undefined;
         if (edgeLine) edgeLine.visible = true;
+        cloned.opacity = mesh.userData._originalOpacity as number;
+        cloned.transparent = mesh.userData._originalTransparent as boolean;
       }
 
       if (threshold) {
@@ -574,14 +583,23 @@ function GltfModel() {
     if (!scene) return;
     scene.updateMatrixWorld(true);
     if (!hullGradient) {
+      // Undo ONLY what we painted — models like the exported pod ship
+      // their own baked vertex colors, which must survive gradient-off.
       scene.traverse((child) => {
         const mesh = child as THREE.Mesh;
-        if (!mesh.isMesh) return;
+        if (!mesh.isMesh || !mesh.userData._agOrig) return;
+        const orig = mesh.userData._agOrig as {
+          attr: THREE.BufferAttribute | null;
+          vertexColors: boolean;
+        };
+        if (orig.attr) mesh.geometry.setAttribute("color", orig.attr);
+        else mesh.geometry.deleteAttribute("color");
         const m = mesh.material as THREE.MeshStandardMaterial;
-        if (m?.vertexColors) {
-          m.vertexColors = false;
+        if (m) {
+          m.vertexColors = orig.vertexColors;
           m.needsUpdate = true;
         }
+        delete mesh.userData._agOrig;
       });
       return;
     }
@@ -603,6 +621,13 @@ function GltfModel() {
       if (!mesh.isMesh || !mesh.geometry) return;
       const pos = mesh.geometry.attributes.position;
       if (!pos) return;
+      const m = mesh.material as THREE.MeshStandardMaterial;
+      if (!mesh.userData._agOrig) {
+        mesh.userData._agOrig = {
+          attr: mesh.geometry.getAttribute("color") ?? null,
+          vertexColors: m?.vertexColors ?? false,
+        };
+      }
       const colors = new Float32Array(pos.count * 3);
       for (let i = 0; i < pos.count; i++) {
         v.fromBufferAttribute(pos as THREE.BufferAttribute, i).applyMatrix4(
@@ -617,7 +642,6 @@ function GltfModel() {
         "color",
         new THREE.BufferAttribute(colors, 3),
       );
-      const m = mesh.material as THREE.MeshStandardMaterial;
       if (m) {
         m.vertexColors = true;
         m.needsUpdate = true;
@@ -962,7 +986,7 @@ function PrimitiveModel() {
             color={gradient ? "#ffffff" : (hullTint ?? "#0c1210")}
             vertexColors={gradient}
             transparent
-            opacity={gradient ? 0.22 : 0.32}
+            opacity={wireframe ? 0 : gradient ? 0.22 : 0.32}
             depthWrite={false}
             roughness={roughness}
             metalness={metalness}
@@ -975,7 +999,7 @@ function PrimitiveModel() {
             vertexColors={gradient}
             wireframe
             transparent
-            opacity={gradient ? 0.55 : 0.28}
+            opacity={wireframe ? 0.9 : gradient ? 0.55 : 0.28}
           />
         </mesh>
         {CAPSULE_RACK_XS.map((x, i) => {
@@ -991,7 +1015,7 @@ function PrimitiveModel() {
                 <meshStandardMaterial
                   color={rackTint ?? "#102415"}
                   transparent
-                  opacity={0.55}
+                  opacity={wireframe ? 0 : 0.55}
                 />
               </mesh>
               <mesh rotation={lieOnSide}>
@@ -1000,7 +1024,7 @@ function PrimitiveModel() {
                   color={rackTint ?? wire}
                   wireframe
                   transparent
-                  opacity={0.5}
+                  opacity={wireframe ? 0.9 : 0.5}
                 />
               </mesh>
             </group>
