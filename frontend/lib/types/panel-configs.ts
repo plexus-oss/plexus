@@ -56,6 +56,8 @@ export interface ChartPanelConfig extends BasePanelConfig {
   showFutureDashing?: boolean;
   /** Show cross-panel synced cursor line + tooltip */
   showCrosshair?: boolean;
+  /** Observed ingest-rate chip (avg Hz over the visible window). Default: shown when ≥1 Hz. */
+  showStreamRate?: boolean;
   /** Show alert time bands on charts (default: true) */
   showAlerts?: boolean;
   limits?: Record<string, { min?: number; max?: number }>;

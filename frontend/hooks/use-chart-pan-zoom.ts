@@ -66,9 +66,11 @@ export function isOwnCommit(
  * Adds wheel-to-zoom and drag-to-pan on the chart time axis.
  *
  * Gestures (PlotJuggler-style tool idiom):
- * - Bare wheel over the plot = time zoom centered on the cursor (page scroll
- *   is intentionally suppressed while over the plot). Ctrl/Cmd+wheel — which
- *   is also what trackpad pinch emits — zooms the same way.
+ * - Ctrl/Cmd+wheel = time zoom centered on the cursor. A trackpad pinch
+ *   emits ctrl+wheel natively, so pinch-to-zoom works with no keyboard.
+ *   Bare wheel deliberately falls through to page scroll — a dashboard is
+ *   mostly panels, and hijacking two-finger scroll made the page
+ *   unscrollable from a trackpad (customer-reported).
  * - Plain drag = pan (Ctrl/Cmd+drag still pans as before).
  * - Shift+drag = X time-brush zoom.
  * - Double-click or Escape (while hovering) = reset to the pre-zoom
@@ -200,9 +202,10 @@ export function useChartPanZoom({
 
     const handleWheel = (e: WheelEvent) => {
       if (!activeRef.current) return;
-      // Bare wheel zooms (tool idiom); preventDefault keeps the page from
-      // scrolling while over the plot. Ctrl/Cmd+wheel (incl. trackpad pinch)
-      // takes the same path.
+      // Bare wheel scrolls the page; only Ctrl/Cmd+wheel (which is also
+      // what a trackpad pinch emits) zooms. preventDefault then keeps the
+      // browser's own pinch-page-zoom from firing alongside ours.
+      if (!e.ctrlKey && !e.metaKey) return;
       e.preventDefault();
       captureBaseline();
 

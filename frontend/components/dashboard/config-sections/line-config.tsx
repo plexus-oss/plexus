@@ -100,6 +100,11 @@ export function LineConfig({ config, onChange, metrics = [] }: Props) {
             checked={bool("showTable", false)}
             onChange={(v) => onChange({ showTable: v })}
           />
+          <CheckboxRow
+            label="Show stream rate (Hz)"
+            checked={bool("showStreamRate", true)}
+            onChange={(v) => onChange({ showStreamRate: v })}
+          />
         </div>
       </AdvancedGroup>
     </div>

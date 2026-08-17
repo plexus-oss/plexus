@@ -418,6 +418,50 @@ export function ChartPanel({
     return [...ghosts, ...activeSeries];
   }, [ghostSeries, activeSeries, visibleWindow]);
 
+  // Observed stream rate over the visible window — how fast data is
+  // actually arriving at the platform, so high-rate users can verify
+  // nothing is being dropped ("I send 60 Hz, am I getting 60 Hz?").
+  // Σ(count ?? 1) is tier-independent: downsampled buckets carry their
+  // raw-event counts, so the chip reads true received Hz whether the
+  // window is served raw or rolled up. Hidden below 1 Hz unless the
+  // panel opts in — sparse metrics don't need a rate badge.
+  const streamRateHz = useMemo(() => {
+    if (panel.config.showStreamRate === false) return null;
+    if (panel.config.xAxisField) return null;
+    if (panel.dataSource?.type === "connection") return null;
+    let best: number | null = null;
+    const win = visibleWindow;
+    for (const key of displayedMetrics) {
+      const points = chartData?.[key];
+      if (!points || points.length < 2) continue;
+      let total = 0;
+      let first = Infinity;
+      let last = -Infinity;
+      for (const p of points) {
+        const t = new Date(p.timestamp).getTime();
+        if (!Number.isFinite(t)) continue;
+        if (win && (t < win[0] || t > win[1])) continue;
+        total += (p as { count?: number }).count ?? 1;
+        if (t < first) first = t;
+        if (t > last) last = t;
+      }
+      const spanSec = (last - first) / 1000;
+      if (total < 2 || spanSec <= 0) continue;
+      const hz = (total - 1) / spanSec;
+      if (best === null || hz > best) best = hz;
+    }
+    if (best === null) return null;
+    if (best < 1) return null;
+    return best;
+  }, [
+    chartData,
+    displayedMetrics,
+    visibleWindow,
+    panel.config.showStreamRate,
+    panel.config.xAxisField,
+    panel.dataSource?.type,
+  ]);
+
   // Newest data timestamp (pre-windowing, from useChartSeries) — the live
   // viewport anchors to this so it stays still until new data arrives, then
   // eases to catch up. Ghost series are deliberately EXCLUDED: a longer,
@@ -1092,6 +1136,19 @@ export function ChartPanel({
             stacked={panel.config.stacked}
             orientation={panel.config.orientation || "vertical"}
           />
+
+          {streamRateHz !== null && (
+            <div
+              className="absolute top-2 right-2 z-10 pointer-events-none text-[9px] font-mono px-1.5 py-0.5 rounded bg-background/70 text-muted-foreground border border-border/50"
+              title="Observed ingest rate over the visible window"
+            >
+              avg{" "}
+              {streamRateHz >= 10
+                ? Math.round(streamRateHz)
+                : streamRateHz.toFixed(1)}{" "}
+              Hz
+            </div>
+          )}
 
           {brushRect &&
             xDomain &&
