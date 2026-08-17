@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { Eye, EyeOff, Trash2, Plus } from "lucide-react";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
@@ -10,10 +10,13 @@ import { Spinner } from "@/components/ui/spinner";
 import {
   Select,
   SelectContent,
+  SelectGroup,
   SelectItem,
+  SelectLabel,
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { useMergedMetricsBySource } from "@/hooks/use-merged-metrics";
 import {
   colorScales,
   type ColorScaleName,
@@ -51,6 +54,62 @@ export function Model3DConfig({ config, onChange, metrics = [] }: Props) {
     (config.modelLayerVisibility as Record<string, boolean> | undefined) ?? {};
   const isGltf = config.modelType === "gltf" || config.modelType === "glb";
   const modelUrl = config.modelUrl as string | undefined;
+
+  // Bindable metrics: the panel's own selection plus everything the
+  // discovery tree knows, source-qualified (`source:metric`, the same form
+  // the signal-rail drag payload uses) — so a panel added without metrics
+  // can still be bound entirely from this sidebar.
+  const { sources: discoveredSources } = useMergedMetricsBySource();
+  const metricGroups = useMemo(() => {
+    const groups: {
+      label: string;
+      options: { value: string; label: string }[];
+    }[] = [];
+    const seen = new Set<string>();
+    if (metrics.length > 0) {
+      groups.push({
+        label: "Panel metrics",
+        options: metrics.map((m) => {
+          seen.add(m);
+          return { value: m, label: m.includes(":") ? m.split(":")[1] : m };
+        }),
+      });
+    }
+    for (const s of discoveredSources) {
+      const options = s.metrics
+        .map((m) => ({ value: `${s.source_id}:${m}`, label: m }))
+        .filter((o) => !seen.has(o.value));
+      if (options.length > 0) groups.push({ label: s.source_id, options });
+    }
+    return groups;
+  }, [metrics, discoveredSources]);
+
+  const renderMetricItems = (current?: string) => {
+    const known =
+      !current ||
+      metricGroups.some((g) => g.options.some((o) => o.value === current));
+    return (
+      <>
+        {!known && current && (
+          <SelectItem value={current} className="text-xs">
+            {current.includes(":") ? current.split(":")[1] : current}
+          </SelectItem>
+        )}
+        {metricGroups.map((g) => (
+          <SelectGroup key={g.label}>
+            <SelectLabel className="text-[10px] text-muted-foreground">
+              {g.label}
+            </SelectLabel>
+            {g.options.map((o) => (
+              <SelectItem key={o.value} value={o.value} className="text-xs">
+                {o.label}
+              </SelectItem>
+            ))}
+          </SelectGroup>
+        ))}
+      </>
+    );
+  };
 
   const [discoverState, setDiscoverState] = useState<
     | { kind: "idle" }
@@ -337,11 +396,7 @@ export function Model3DConfig({ config, onChange, metrics = [] }: Props) {
                     <SelectItem value="_none" className="text-xs">
                       No metric
                     </SelectItem>
-                    {metrics.map((m) => (
-                      <SelectItem key={m} value={m} className="text-xs">
-                        {m.includes(":") ? m.split(":")[1] : m}
-                      </SelectItem>
-                    ))}
+                    {renderMetricItems(b.metric)}
                   </SelectContent>
                 </Select>
               </div>
@@ -522,11 +577,7 @@ export function Model3DConfig({ config, onChange, metrics = [] }: Props) {
                   <SelectItem value="_none" className="text-xs">
                     No metric
                   </SelectItem>
-                  {metrics.map((m) => (
-                    <SelectItem key={m} value={m} className="text-xs">
-                      {m.includes(":") ? m.split(":")[1] : m}
-                    </SelectItem>
-                  ))}
+                  {renderMetricItems(binding.metric)}
                 </SelectContent>
               </Select>
               <div className="flex gap-2">
@@ -607,11 +658,7 @@ export function Model3DConfig({ config, onChange, metrics = [] }: Props) {
                   <SelectItem value="_auto" className="text-xs">
                     Auto-detect
                   </SelectItem>
-                  {metrics.map((m) => (
-                    <SelectItem key={m} value={m} className="text-xs">
-                      {m.includes(":") ? m.split(":")[1] : m}
-                    </SelectItem>
-                  ))}
+                  {renderMetricItems(config[key] as string | undefined)}
                 </SelectContent>
               </Select>
             </div>
@@ -648,11 +695,7 @@ export function Model3DConfig({ config, onChange, metrics = [] }: Props) {
                 <SelectItem value="_none" className="text-xs">
                   Not set
                 </SelectItem>
-                {metrics.map((m) => (
-                  <SelectItem key={m} value={m} className="text-xs">
-                    {m.includes(":") ? m.split(":")[1] : m}
-                  </SelectItem>
-                ))}
+                {renderMetricItems(config[key] as string | undefined)}
               </SelectContent>
             </Select>
           </div>
