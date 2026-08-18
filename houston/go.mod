@@ -1,10 +1,10 @@
 module github.com/plexus-oss/plexus/houston
 
-go 1.26.1
+go 1.26.6
 
 require (
 	github.com/joho/godotenv v1.5.1
-	github.com/klauspost/compress v1.18.5
+	github.com/klauspost/compress v1.18.7
 	github.com/prometheus/client_golang v1.23.2
 	github.com/redis/go-redis/v9 v9.18.0
 )
@@ -20,6 +20,6 @@ require (
 	github.com/prometheus/procfs v0.16.1 // indirect
 	go.uber.org/atomic v1.11.0 // indirect
 	go.yaml.in/yaml/v2 v2.4.2 // indirect
-	golang.org/x/sys v0.41.0 // indirect
+	golang.org/x/sys v0.44.0 // indirect
 	google.golang.org/protobuf v1.36.8 // indirect
 )
