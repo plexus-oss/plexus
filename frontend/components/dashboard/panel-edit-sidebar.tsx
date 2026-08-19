@@ -42,7 +42,8 @@ import {
   isConnectionSource,
   type ConnectionDataSource,
 } from "@/lib/types/dashboard";
-import { X, Trash2, ChevronDown } from "lucide-react";
+import { X, Trash2, ChevronDown, Code2 } from "lucide-react";
+import { EmbedPanelDialog } from "@/components/dashboard/embed-panel-dialog";
 import { cn } from "@/lib/utils";
 import { getPanelsByCategory, getPanelDefinition } from "@/lib/panels/registry";
 import { usePanelData } from "@/hooks/use-panel-data";
@@ -79,6 +80,7 @@ export function PanelEditSidebar({
   });
   const [config, setConfig] = useState<PanelConfig>({});
   const [typePickerOpen, setTypePickerOpen] = useState(false);
+  const [embedOpen, setEmbedOpen] = useState(false);
   const { filters: dashboardFilters } = useDashboardFilters();
   const { values: variableValues } = useDashboardVariables();
 
@@ -327,6 +329,26 @@ export function PanelEditSidebar({
             showRefresh={showConnectionControls}
             showFilters={showFilters}
           />
+        )}
+
+        {/* Embed */}
+        {panel && (
+          <div className="px-4 py-4 border-t border-border mt-2">
+            <Button
+              variant="ghost"
+              size="sm"
+              className="w-full h-9 text-sm"
+              onClick={() => setEmbedOpen(true)}
+            >
+              <Code2 className="h-4 w-4 mr-2" />
+              Embed this panel
+            </Button>
+            <EmbedPanelDialog
+              panelId={panel.id}
+              open={embedOpen}
+              onOpenChange={setEmbedOpen}
+            />
+          </div>
         )}
 
         {/* Delete */}

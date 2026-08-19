@@ -20,6 +20,7 @@ import {
   ilike,
   inArray,
   isNotNull,
+  isNull,
   like,
   or,
   sql,
@@ -47,6 +48,8 @@ import {
   alertEvents,
   sourceContext,
   deviceSchemas,
+  embedOrigins,
+  embedPublishes,
 } from "./schema";
 import type {
   Database,
@@ -2293,4 +2296,145 @@ export const adminOrgBillingQueries = {
 
   /** Alias of upsert — kept for call-site readability ("patch one field"). */
   patch: upsertOrgBilling,
+};
+
+/**
+ * Embed origins (bypasses RLS; every method is org-scoped in its WHERE). The
+ * browser origins an org may render embedded panels from — see lib/embed/
+ * origins.ts for verification + CORS.
+ */
+export const adminEmbedOriginQueries = {
+  findAll: async (orgId: string) => {
+    return await db
+      .select()
+      .from(embedOrigins)
+      .where(eq(embedOrigins.org_id, orgId))
+      .orderBy(desc(embedOrigins.created_at));
+  },
+
+  /** Verified origins only — what the CORS layer is allowed to reflect. */
+  findVerifiedOrigins: async (orgId: string): Promise<string[]> => {
+    const rows = await db
+      .select({ origin: embedOrigins.origin })
+      .from(embedOrigins)
+      .where(
+        and(
+          eq(embedOrigins.org_id, orgId),
+          isNotNull(embedOrigins.verified_at),
+        ),
+      );
+    return rows.map((r) => r.origin);
+  },
+
+  findById: async (orgId: string, id: string) => {
+    const rows = await db
+      .select()
+      .from(embedOrigins)
+      .where(and(eq(embedOrigins.org_id, orgId), eq(embedOrigins.id, id)));
+    return rows[0];
+  },
+
+  create: async (
+    orgId: string,
+    data: {
+      origin: string;
+      domain: string;
+      verification_token: string;
+      created_by?: string | null;
+    },
+  ) => {
+    const [row] = await db
+      .insert(embedOrigins)
+      .values({
+        org_id: orgId,
+        origin: data.origin,
+        domain: data.domain,
+        verification_token: data.verification_token,
+        created_by: data.created_by ?? null,
+      })
+      .returning();
+    return row;
+  },
+
+  markVerified: async (orgId: string, id: string) => {
+    const [row] = await db
+      .update(embedOrigins)
+      .set({ verified_at: new Date().toISOString(), updated_at: new Date().toISOString() })
+      .where(and(eq(embedOrigins.org_id, orgId), eq(embedOrigins.id, id)))
+      .returning();
+    return row;
+  },
+
+  delete: async (orgId: string, id: string) => {
+    await db
+      .delete(embedOrigins)
+      .where(and(eq(embedOrigins.org_id, orgId), eq(embedOrigins.id, id)));
+  },
+};
+
+/**
+ * Durable published embeds (bypasses RLS; every method org-scoped). Create/list/
+ * revoke stable read-only embed tokens; `findActiveByToken` powers embed reads.
+ */
+export const adminEmbedPublishQueries = {
+  findAllForPanel: async (orgId: string, dashboardId: string, panelId: string) => {
+    return await db
+      .select()
+      .from(embedPublishes)
+      .where(
+        and(
+          eq(embedPublishes.org_id, orgId),
+          eq(embedPublishes.dashboard_id, dashboardId),
+          eq(embedPublishes.panel_id, panelId),
+        ),
+      )
+      .orderBy(desc(embedPublishes.created_at));
+  },
+
+  /** Active (non-revoked) publish for a raw token — the embed read path. */
+  findActiveByToken: async (token: string) => {
+    const rows = await db
+      .select()
+      .from(embedPublishes)
+      .where(
+        and(eq(embedPublishes.token, token), isNull(embedPublishes.revoked_at)),
+      )
+      .limit(1);
+    return rows[0];
+  },
+
+  create: async (
+    orgId: string,
+    data: {
+      dashboard_id: string;
+      panel_id: string;
+      token: string;
+      label?: string | null;
+      time_range?: string | null;
+      created_by?: string | null;
+    },
+  ) => {
+    const [row] = await db
+      .insert(embedPublishes)
+      .values({
+        org_id: orgId,
+        dashboard_id: data.dashboard_id,
+        panel_id: data.panel_id,
+        token: data.token,
+        label: data.label ?? null,
+        time_range: data.time_range ?? null,
+        created_by: data.created_by ?? null,
+      })
+      .returning();
+    return row;
+  },
+
+  revoke: async (orgId: string, id: string) => {
+    const [row] = await db
+      .update(embedPublishes)
+      .set({ revoked_at: new Date().toISOString() })
+      .where(and(eq(embedPublishes.org_id, orgId), eq(embedPublishes.id, id)))
+      .returning();
+    return row;
+  },
 };

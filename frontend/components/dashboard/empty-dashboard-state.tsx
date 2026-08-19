@@ -40,7 +40,7 @@ export function EmptyDashboardState({ onAddPanel }: EmptyDashboardStateProps) {
         </button>
 
         <p className="text-[11px] text-muted-foreground">
-          Or drag a metric from the Signals rail — or import a flight or test
+          Or drag a metric from the Metrics rail — or import a flight or test
           log via Add Device → Log file.
         </p>
       </div>

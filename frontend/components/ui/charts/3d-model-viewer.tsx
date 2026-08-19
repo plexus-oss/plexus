@@ -836,8 +836,8 @@ function StlObjModel() {
 // needs zero CAD files. Cylinder/box/cone carry a nose cap (up) and a heading
 // fin (forward) so orientation reads on symmetric bodies. Capsule is the
 // "pod" body: a horizontal hologram-wireframe hull with four internal rack
-// discs — the anatomy submersible/enclosure pods tend to have — and every
-// named part accepts callout bindings.
+// discs and a small tail fin — the anatomy submersible/enclosure pods tend
+// to have — and every named part accepts callout bindings.
 //
 // Named meshes announce themselves (onPartsDiscovered), emit throttled
 // screen positions (for callout leader lines), and forward hover/click —
@@ -858,7 +858,7 @@ const PRIMITIVE_PART_NAMES: Record<string, string[]> = {
   cylinder: ["body", "nose", "fin"],
   box: ["body", "nose", "fin"],
   cone: ["body", "nose", "fin"],
-  capsule: ["hull", ...CAPSULE_RACK_NAMES],
+  capsule: ["hull", "fin", ...CAPSULE_RACK_NAMES],
 };
 
 function PrimitiveModel() {
@@ -908,6 +908,25 @@ function PrimitiveModel() {
     return geo;
   }, [hullGradient, kind, colorScale]);
   useEffect(() => () => hullGeometry.dispose(), [hullGeometry]);
+
+  // Small swept-back dorsal tail fin at the aft (-X) end — the one asymmetry
+  // on an otherwise symmetric hull, so yaw/heading reads at a glance. A thin
+  // triangular prism: vertical trailing edge aft, leading edge sloping down
+  // to the hull.
+  const finGeometry = useMemo(() => {
+    const outline = new THREE.Shape();
+    outline.moveTo(0, 0);
+    outline.lineTo(-0.34, 0);
+    outline.lineTo(-0.34, 0.24);
+    outline.closePath();
+    const geo = new THREE.ExtrudeGeometry(outline, {
+      depth: 0.03,
+      bevelEnabled: false,
+    });
+    geo.translate(0, 0, -0.015);
+    return geo;
+  }, []);
+  useEffect(() => () => finGeometry.dispose(), [finGeometry]);
 
   // Announce named parts so config UIs and drop-to-bind callouts see them.
   useEffect(() => {
@@ -972,6 +991,7 @@ function PrimitiveModel() {
     const lieOnSide: [number, number, number] = [0, 0, Math.PI / 2];
     const wire = modelColor ?? HOLO_WIRE;
     const hullTint = partColors?.hull;
+    const finTint = partColors?.fin;
     const gradient = hullGradient && !hullTint;
     return (
       <group ref={groupRef} rotation={modelRotationOffset ?? [0, 0, 0]}>
@@ -1002,6 +1022,25 @@ function PrimitiveModel() {
             opacity={wireframe ? 0.9 : gradient ? 0.55 : 0.28}
           />
         </mesh>
+        {/* Tail fin — same hologram shell + wire pairing as the racks, so
+            the wireframe toggle treats it like the rest of the pod. */}
+        <group position={[-0.55, 0.38, 0]}>
+          <mesh name="fin" geometry={finGeometry} {...partEvents("fin")}>
+            <meshStandardMaterial
+              color={finTint ?? "#102415"}
+              transparent
+              opacity={wireframe ? 0 : 0.55}
+            />
+          </mesh>
+          <mesh geometry={finGeometry}>
+            <meshBasicMaterial
+              color={finTint ?? wire}
+              wireframe
+              transparent
+              opacity={wireframe ? 0.9 : 0.5}
+            />
+          </mesh>
+        </group>
         {CAPSULE_RACK_XS.map((x, i) => {
           const rackTint = partColors?.[CAPSULE_RACK_NAMES[i]];
           return (

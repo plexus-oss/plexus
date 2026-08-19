@@ -6,6 +6,7 @@
  */
 
 import type { TimeRange, DataFilter } from "@/lib/types/dashboard";
+import type { ConnectionType } from "@/lib/db/types";
 import { filtersToSqlConditions } from "@/lib/transforms/sql";
 import type { ParameterizedConditions } from "@/lib/transforms/sql";
 
@@ -27,7 +28,37 @@ export interface InjectedQuery {
 // Time Range Helpers
 // =============================================================================
 
-export type SqlDialect = "postgres" | "clickhouse";
+export type SqlDialect = "postgres" | "clickhouse" | "mysql";
+
+/**
+ * Resolve the macro/quoting dialect for a connection's real store type. The
+ * client must not guess from the source id — a customer's own ClickHouse or
+ * MySQL connection needs its own dialect, not Postgres macros. Postgres and
+ * TimescaleDB share Postgres syntax; InfluxDB (Flux) and Prometheus (PromQL)
+ * don't go through this SQL macro layer, so their default is harmless.
+ */
+export function dialectForConnectionType(
+  type: ConnectionType | null | undefined,
+): SqlDialect {
+  switch (type) {
+    case "clickhouse":
+      return "clickhouse";
+    case "mysql":
+      return "mysql";
+    default:
+      return "postgres";
+  }
+}
+
+/**
+ * Quote a SQL identifier for the dialect. MySQL's default sql_mode treats
+ * double-quoted names as string literals, so it must use backticks; Postgres
+ * and ClickHouse both accept double quotes.
+ */
+function quoteIdent(name: string, dialect: SqlDialect): string {
+  if (dialect === "mysql") return "`" + name.replace(/`/g, "``") + "`";
+  return '"' + name.replace(/"/g, '""') + '"';
+}
 
 /** Parse a relative range like "3m", "45m", "6h", "7d" into (n, unit). */
 function parseRelativeRange(
@@ -44,9 +75,10 @@ function renderInterval(
   unit: "s" | "m" | "h" | "d",
   dialect: SqlDialect,
 ): string {
-  if (dialect === "clickhouse") {
-    const chUnit = { s: "SECOND", m: "MINUTE", h: "HOUR", d: "DAY" }[unit];
-    return `INTERVAL ${n} ${chUnit}`;
+  if (dialect === "clickhouse" || dialect === "mysql") {
+    // ClickHouse and MySQL both use unquoted singular units: INTERVAL 24 HOUR.
+    const unitWord = { s: "SECOND", m: "MINUTE", h: "HOUR", d: "DAY" }[unit];
+    return `INTERVAL ${n} ${unitWord}`;
   }
   const pgUnit = { s: "seconds", m: "minutes", h: "hours", d: "days" }[unit];
   return `INTERVAL '${n} ${pgUnit}'`;
@@ -54,7 +86,7 @@ function renderInterval(
 
 /** Render an INTERVAL for a bucket size in seconds, per dialect. */
 function renderBucketInterval(sec: number, dialect: SqlDialect): string {
-  if (dialect === "clickhouse") {
+  if (dialect === "clickhouse" || dialect === "mysql") {
     if (sec % 86400 === 0) return `INTERVAL ${sec / 86400} DAY`;
     if (sec % 3600 === 0) return `INTERVAL ${sec / 3600} HOUR`;
     if (sec % 60 === 0) return `INTERVAL ${sec / 60} MINUTE`;
@@ -71,6 +103,10 @@ function renderTimeBucket(
 ): string {
   if (dialect === "clickhouse") {
     return `toStartOfInterval(${colExpr}, ${renderBucketInterval(bucketSec, dialect)})`;
+  }
+  if (dialect === "mysql") {
+    // MySQL has no date_trunc / toStartOfInterval; floor over the unix epoch.
+    return `FROM_UNIXTIME(FLOOR(UNIX_TIMESTAMP(${colExpr}) / ${bucketSec}) * ${bucketSec})`;
   }
   return `to_timestamp(floor(extract(epoch from ${colExpr}) / ${bucketSec}) * ${bucketSec})`;
 }
@@ -152,7 +188,9 @@ export function substituteVariables(
   // dialect syntax into stored SQL.
   result = result.replace(/\$__text\(([^)]+)\)/g, (_, expr: string) => {
     const e = expr.trim();
-    return dialect === "clickhouse" ? `toString(${e})` : `(${e})::text`;
+    if (dialect === "clickhouse") return `toString(${e})`;
+    if (dialect === "mysql") return `CAST(${e} AS CHAR)`;
+    return `(${e})::text`;
   });
 
   // Replace $__interval and $__timeGroup(col) macros
@@ -170,18 +208,28 @@ export function substituteVariables(
     // Without it, the bucket auto-sizes from the time range (historical form).
     const fixed = /^(.*?),\s*'(hour|day|week|month)'$/.exec(inner.trim());
     const raw = (fixed ? fixed[1] : inner).trim();
-    const col = /^[\w]+$/.test(raw) ? `"${raw}"` : raw;
+    const col = /^[\w]+$/.test(raw) ? quoteIdent(raw, dialect) : raw;
     if (fixed) {
       const unit = fixed[2];
       if (dialect === "clickhouse") {
         return `toStartOfInterval(${col}, INTERVAL 1 ${unit.toUpperCase()})`;
       }
+      if (dialect === "mysql") {
+        // MySQL has no date_trunc; truncate per unit with native expressions.
+        switch (unit) {
+          case "hour":
+            return `DATE_FORMAT(${col}, '%Y-%m-%d %H:00:00')`;
+          case "day":
+            return `DATE_FORMAT(${col}, '%Y-%m-%d 00:00:00')`;
+          case "week":
+            return `DATE_SUB(DATE(${col}), INTERVAL WEEKDAY(${col}) DAY)`;
+          default: // month
+            return `DATE_FORMAT(${col}, '%Y-%m-01 00:00:00')`;
+        }
+      }
       return `date_trunc('${unit}', ${col})`;
     }
-    if (dialect === "clickhouse") {
-      return `toStartOfInterval(${col}, ${renderBucketInterval(bucketSec, dialect)})`;
-    }
-    return `to_timestamp(floor(extract(epoch from ${col}) / ${bucketSec}) * ${bucketSec})`;
+    return renderTimeBucket(col, bucketSec, dialect);
   });
 
   // Replace $__timeFilter(column) macro
@@ -192,7 +240,7 @@ export function substituteVariables(
       /\$__timeFilter\(([^)]+)\)/g,
       (_, colExpr: string) => {
         const col = /^[\w]+$/.test(colExpr.trim())
-          ? `"${colExpr.trim()}"`
+          ? quoteIdent(colExpr.trim(), dialect)
           : colExpr.trim();
         if (!timeRange) return "TRUE";
         if (timeRange.type === "relative") {
@@ -278,6 +326,7 @@ export function injectConditions(
     alreadyAggregated = false,
     dialect = "postgres",
   } = options;
+  const q = (name: string) => quoteIdent(name, dialect);
   const conditions: string[] = [];
   let filterParams: unknown[] = [];
   // Track whether we pushed a time condition on `timeColumn`. When we did, the
@@ -294,7 +343,7 @@ export function injectConditions(
       const parsed = parseRelativeRange(timeRange.value);
       if (parsed) {
         conditions.push(
-          `"${timeColumn}" >= NOW() - ${renderInterval(parsed.n, parsed.unit, dialect)}`,
+          `${q(timeColumn)} >= NOW() - ${renderInterval(parsed.n, parsed.unit, dialect)}`,
         );
         timeConditionAdded = true;
       }
@@ -302,11 +351,11 @@ export function injectConditions(
       const [start, end] = timeRange.value.split("/");
       if (start && end) {
         conditions.push(
-          `"${timeColumn}" >= '${start}' AND "${timeColumn}" <= '${end}'`,
+          `${q(timeColumn)} >= '${start}' AND ${q(timeColumn)} <= '${end}'`,
         );
         timeConditionAdded = true;
       } else if (start) {
-        conditions.push(`"${timeColumn}" >= '${start}'`);
+        conditions.push(`${q(timeColumn)} >= '${start}'`);
         timeConditionAdded = true;
       }
     }
@@ -364,12 +413,12 @@ export function injectConditions(
     conditions.length > 0 ? `\nWHERE ${conditions.join(" AND ")}` : "";
 
   if (shouldBucket) {
-    const col = `"${timeColumn}"`;
+    const col = q(timeColumn!);
     const bucketSec = pickBucketSeconds(rangeSeconds);
     const bucketExpr = renderTimeBucket(col, bucketSec, dialect);
-    const valCol = `"${valueColumn}"`;
-    const seriesSelect = seriesColumn ? `,\n  "${seriesColumn}"` : "";
-    const seriesGroup = seriesColumn ? `, "${seriesColumn}"` : "";
+    const valCol = q(valueColumn!);
+    const seriesSelect = seriesColumn ? `,\n  ${q(seriesColumn)}` : "";
+    const seriesGroup = seriesColumn ? `, ${q(seriesColumn)}` : "";
     // Reduce each bucket with max(), not avg(): max() is type-safe across
     // Postgres/ClickHouse (avg() errors on boolean columns like
     // `maneuver_detected`, which would break an otherwise-working panel), and
@@ -384,7 +433,7 @@ export function injectConditions(
     return { sql, params: filterParams };
   }
 
-  const orderClause = shouldOrder ? ` ORDER BY "${timeColumn}" ASC` : "";
+  const orderClause = shouldOrder ? ` ORDER BY ${q(timeColumn!)} ASC` : "";
   const sql = `WITH _user_query AS (\n${innerQuery}\n)\nSELECT * FROM _user_query${whereClause}${orderClause}${limitClause}`;
   return { sql, params: filterParams };
 }

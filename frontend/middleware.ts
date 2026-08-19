@@ -79,6 +79,15 @@ const PUBLIC_ROUTE_PATTERNS = [
   "/api/alerts(.*)",
   "/api/internal(.*)",
   "/api/sources/register(.*)",
+  // Anonymous embed DATA plane: authed by an embed token + verified Origin, not
+  // a session. Only /panel(s) — the /origins + /publishes management routes stay
+  // session-gated, and /token is server-to-server via x-api-key (handled below).
+  "/api/embed/panel(.*)",
+  // Framing allowlist lookup — called BY middleware (below) to build the
+  // frame-ancestors CSP; public, authed by the durable token in the query.
+  "/api/embed/frame-origins(.*)",
+  // The hosted iframe embed page — public, authed by the durable token in its URL.
+  "/embed/(.*)",
 ];
 
 const PUBLIC_ROUTE_REGEXES = PUBLIC_ROUTE_PATTERNS.map(
@@ -115,6 +124,33 @@ export default async function middleware(
     );
     if (hasSession) return NextResponse.redirect(postAuthRedirect(req));
     return NextResponse.next();
+  }
+
+  // Hosted iframe embeds (/embed/<token>): the page is public, but the browser
+  // must only let the token org's DNS-verified domains frame it. Set a per-token
+  // `frame-ancestors` CSP, resolving the allowlist via an internal node route
+  // (edge middleware can't read Postgres). Fail closed to 'none' — an unknown,
+  // revoked, or unresolvable token is framable nowhere.
+  if (pathname.startsWith("/embed/")) {
+    const token = pathname.slice("/embed/".length).split("/")[0];
+    let frameAncestors = "'none'";
+    try {
+      const lookup = new URL("/api/embed/frame-origins", req.nextUrl.origin);
+      lookup.searchParams.set("token", token);
+      const r = await fetch(lookup);
+      if (r.ok) {
+        const { origins } = (await r.json()) as { origins: string[] };
+        if (origins.length > 0) frameAncestors = origins.join(" ");
+      }
+    } catch {
+      /* lookup failed — keep 'none'; the page still renders, just not framable */
+    }
+    const res = NextResponse.next();
+    res.headers.set(
+      "Content-Security-Policy",
+      `frame-ancestors ${frameAncestors}`,
+    );
+    return res;
   }
 
   if (isPublicRoute(req)) return NextResponse.next();

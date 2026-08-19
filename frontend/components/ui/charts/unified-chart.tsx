@@ -48,6 +48,9 @@ export interface UnifiedChartProps {
 		/** "time" renders wall-clock-anchored ticks (base-chart nice-interval ladder). */
 		type?: "number" | "time";
 		formatter?: (value: number) => string;
+		/** Optional finer formatter for the hover tooltip (e.g. axis shows the
+		 *  day, the tooltip shows day + time). Falls back to `formatter`. */
+		tooltipFormatter?: (value: number) => string;
 	};
 	yAxis?: {
 		label?: string;
@@ -442,7 +445,7 @@ function Tooltip() {
 
 		if (items.length === 0) return;
 
-		const xFmt = ctx.xAxis?.formatter;
+		const xFmt = ctx.xAxis?.tooltipFormatter ?? ctx.xAxis?.formatter;
 		ctx.setHoveredPoint({
 			seriesIdx: 0,
 			pointIdx: 0,
@@ -557,6 +560,9 @@ function Root({
 		/** "time" renders wall-clock-anchored ticks (base-chart nice-interval ladder). */
 		type?: "number" | "time";
 		formatter?: (value: number) => string;
+		/** Optional finer formatter for the hover tooltip (e.g. axis shows the
+		 *  day, the tooltip shows day + time). Falls back to `formatter`. */
+		tooltipFormatter?: (value: number) => string;
 	};
 	yAxis?: {
 		label?: string;

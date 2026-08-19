@@ -13,14 +13,14 @@ import { Play } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Spinner } from "@/components/ui/spinner";
-import { useConnectionQueryManual } from "@/hooks/use-connection-query";
+import {
+  useConnectionQueryManual,
+  useSourceDialect,
+} from "@/hooks/use-connection-query";
 import { substituteVariables } from "@/lib/transforms/connection-query";
 import { classifyColumn, type ColumnRole } from "@/lib/dashboard/column-roles";
 import type { TimeRange } from "@/lib/types/dashboard";
 import { cn } from "@/lib/utils";
-
-// Same sentinel used by use-connection-query / data-source-selector.
-const PLEXUS_SOURCE_ID = "__plexus__";
 
 const PREVIEW_ROWS = 5;
 
@@ -52,10 +52,10 @@ export function SqlEditor({
   const [ran, setRan] = useState(false);
   const { result, isLoading, error, execute } =
     useConnectionQueryManual(sourceId);
+  const dialect = useSourceDialect(sourceId);
 
   const run = async () => {
     setRan(true);
-    const dialect = sourceId === PLEXUS_SOURCE_ID ? "clickhouse" : "postgres";
     const { sql } = substituteVariables(
       query,
       variables ?? {},

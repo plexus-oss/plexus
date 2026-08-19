@@ -31,15 +31,18 @@ so can you).
 
 ## What needs an enterprise key
 
-- SSO / SAML / SCIM
 - Role-based access control and fine-grained permissions
-- Audit logs (retention, tamper-evidence, auditor-format export)
-- Multi-tenancy and per-tenant views
 - Air-gapped signed release channel with CVE patch SLA
 - Support entitlements
 
 The gate sits at the **organization** boundary, never the team boundary — a
 single team never hits a paywall.
+
+**Not yet available:** SSO / SAML / SCIM and per-tenant audit logs (retention,
+tamper-evidence, auditor-format export) are not implemented today and are not
+part of an enterprise key. Contact us for current status before relying on
+them. Plexus is already multi-tenant at the organization boundary for every
+tier — that is not a paid feature.
 
 If no key is installed, Plexus runs as the free tier, silently. If a key
 expires, enterprise features degrade to read-only with a clear message — the

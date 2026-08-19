@@ -18,6 +18,7 @@ import { decideRawTier } from "@/lib/db/adaptive-tier";
 import { createClient, ClickHouseClient } from "@clickhouse/client";
 import https from "node:https";
 import type { DeviceEvent } from "@/lib/db/types";
+import { withShadowAudit, isChShadowEnabled } from "@/lib/db/ch-shadow";
 import { globalSingleton } from "@/lib/global-singleton";
 import { RETENTION } from "@/lib/retention";
 
@@ -150,6 +151,11 @@ export function getClient(orgId?: string): ClickHouseClient {
   if (orgId && ROW_POLICY_ENABLED) {
     return withOrgScope(cache.client, orgId);
   }
+  // Shadow audit (independent of enforcement): classify reads before flipping
+  // the policy on. Pure no-op unless PLEXUS_CH_ROW_POLICY_SHADOW=1.
+  if (isChShadowEnabled()) {
+    return withShadowAudit(cache.client, orgId ? "org-scoped" : "unscoped");
+  }
   return cache.client;
 }
 
@@ -173,6 +179,9 @@ export function getGlobalReadClient(): ClickHouseClient {
       process.env.PLEXUS_CLICKHOUSE_GLOBAL_PASSWORD || "",
     );
     cache.globalCreatedAt = now;
+  }
+  if (isChShadowEnabled()) {
+    return withShadowAudit(cache.globalClient, "global");
   }
   return cache.globalClient;
 }

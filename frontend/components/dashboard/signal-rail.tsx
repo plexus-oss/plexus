@@ -15,7 +15,14 @@
  */
 
 import { useMemo, useState, useSyncExternalStore } from "react";
-import { ChevronRight, Plus, Search, Wifi, X } from "lucide-react";
+import {
+  ChevronRight,
+  GripVertical,
+  Plus,
+  Search,
+  Wifi,
+  X,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Spinner } from "@/components/ui/spinner";
@@ -106,12 +113,12 @@ export function SignalRail({
     <div className="h-full w-full flex flex-col border-l border-border bg-background">
       {/* Header */}
       <div className="flex h-11 shrink-0 items-center justify-between border-b border-border px-4">
-        <span className="text-sm font-semibold">Signals</span>
+        <span className="text-sm font-semibold">Metrics</span>
         <Button
           size="sm"
           variant="ghost"
           className="h-7 w-7 p-0"
-          aria-label="Close signal rail"
+          aria-label="Close metrics rail"
           onClick={onClose}
         >
           <X className="h-4 w-4" />
@@ -126,7 +133,7 @@ export function SignalRail({
             type="text"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search signals…"
+            placeholder="Search devices, metrics…"
             className="h-8 w-full border-0 bg-transparent pl-8 pr-3 text-sm outline-none placeholder:text-muted-foreground/60"
           />
         </div>
@@ -140,11 +147,11 @@ export function SignalRail({
           </div>
         ) : sources.length === 0 ? (
           <p className="p-4 text-center text-sm text-muted-foreground">
-            No sources yet — connect a device to see its signals here.
+            No sources yet — connect a device to see its metrics here.
           </p>
         ) : filteredSources.length === 0 ? (
           <p className="p-4 text-center text-sm text-muted-foreground">
-            No signals match &ldquo;{search}&rdquo;
+            No metrics match &ldquo;{search}&rdquo;
           </p>
         ) : (
           filteredSources.map((source) => {
@@ -177,7 +184,9 @@ export function SignalRail({
                       chartPanels={chartPanels}
                       menuOpen={menuFor === `${source.source_id}:${metric}`}
                       onMenuOpenChange={(open) =>
-                        setMenuFor(open ? `${source.source_id}:${metric}` : null)
+                        setMenuFor(
+                          open ? `${source.source_id}:${metric}` : null,
+                        )
                       }
                       onAddToPanel={onAddToPanel}
                       onCreatePanel={onCreatePanel}
@@ -194,7 +203,7 @@ export function SignalRail({
       {!dropSeen && (
         <div className="shrink-0 border-t border-border px-3 py-2">
           <p className="text-[10px] leading-relaxed text-muted-foreground">
-            Drag a signal onto a chart — or onto empty space for a new panel.
+            Drag a metric onto a chart — or onto empty space for a new panel.
           </p>
         </div>
       )}
@@ -234,17 +243,26 @@ function MetricRow({
             e.dataTransfer.effectAllowed = "copy";
           }}
           title={qualified}
-          className="group flex w-full cursor-grab items-center gap-2 rounded px-2 py-1 pl-7 text-left transition-colors hover:bg-muted/60 active:cursor-grabbing"
+          className="group flex w-full cursor-grab items-center gap-2 rounded py-1 pl-3 pr-2 text-left transition-colors hover:bg-muted/60 active:cursor-grabbing"
         >
+          {/* Grip: drag affordance — reserves its slot so text never shifts */}
+          <GripVertical className="h-3 w-3 shrink-0 text-muted-foreground/50 opacity-0 transition-opacity group-hover:opacity-100" />
           <span className="whitespace-nowrap font-mono text-[11px] text-muted-foreground group-hover:text-foreground">
-            {truncateMiddle(metric, 34)}
+            {truncateMiddle(metric, 32)}
           </span>
-          <Plus className="ml-auto h-3 w-3 shrink-0 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100" />
+          {/* Not a nested <button> — the whole row is the menu trigger */}
+          <span className="ml-auto flex h-4 w-4 shrink-0 items-center justify-center rounded-sm text-muted-foreground opacity-40 transition group-hover:bg-muted group-hover:opacity-100">
+            <Plus className="h-3 w-3" />
+          </span>
         </button>
       </PopoverTrigger>
       <PopoverContent side="left" align="start" className="w-60 p-1">
         <div className="px-2 py-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
-          Add to…
+          Add{" "}
+          <span className="font-mono normal-case">
+            {truncateMiddle(metric, 20)}
+          </span>{" "}
+          to…
         </div>
         {chartPanels.map((p) => {
           const def = getPanelDefinition(p.type);
@@ -264,7 +282,9 @@ function MetricRow({
               {Icon && (
                 <Icon className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
               )}
-              <span className="truncate">{p.title || def?.label || p.type}</span>
+              <span className="truncate">
+                {p.title || def?.label || p.type}
+              </span>
               {already && (
                 <span className="ml-auto shrink-0 text-[10px] text-muted-foreground">
                   added

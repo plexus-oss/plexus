@@ -40,7 +40,7 @@ export interface ParameterizedConditions {
 export function filtersToSqlConditions(
   filters: DataFilter[],
   paramOffset: number = 1,
-  dialect: "postgres" | "clickhouse" = "postgres"
+  dialect: "postgres" | "clickhouse" | "mysql" = "postgres"
 ): ParameterizedConditions {
   const enabledFilters = filters.filter((f) => f.enabled !== false);
   if (enabledFilters.length === 0) return { sql: "", params: [] };
@@ -50,10 +50,18 @@ export function filtersToSqlConditions(
   let paramIdx = paramOffset;
 
   for (const filter of enabledFilters) {
-    const field = `"${filter.field}"`;
+    // MySQL's default sql_mode rejects double-quoted identifiers; use backticks.
+    const field =
+      dialect === "mysql"
+        ? "`" + filter.field.replace(/`/g, "``") + "`"
+        : `"${filter.field}"`;
     // LIKE only exists for text — cast so string filters work on any column.
     const textField =
-      dialect === "clickhouse" ? `toString(${field})` : `${field}::text`;
+      dialect === "clickhouse"
+        ? `toString(${field})`
+        : dialect === "mysql"
+          ? `CAST(${field} AS CHAR)`
+          : `${field}::text`;
 
     switch (filter.operator) {
       case "contains":

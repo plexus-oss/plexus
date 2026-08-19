@@ -60,8 +60,15 @@ import { OrgSwitcher } from "@/components/org-switcher";
 import { SubscriptionTab } from "@/components/settings/subscription-tab";
 import { DataManagementSettings } from "@/components/settings/data-management-settings";
 import { GroupsSettings } from "@/components/settings/groups-settings";
+import { EmbeddingSettings } from "@/components/settings/embedding-settings";
 
-type SettingsTab = "general" | "billing" | "members" | "data" | "access";
+type SettingsTab =
+  | "general"
+  | "billing"
+  | "members"
+  | "data"
+  | "access"
+  | "embedding";
 
 const VALID_TABS: SettingsTab[] = [
   "general",
@@ -69,6 +76,7 @@ const VALID_TABS: SettingsTab[] = [
   "access",
   "billing",
   "data",
+  "embedding",
 ];
 
 function SettingsPageContent() {
@@ -224,6 +232,7 @@ function SettingsPageContent() {
     ...(isAdmin ? [{ id: "access", label: "Access" }] : []),
     ...(billingEnabled ? [{ id: "billing", label: "Subscription" }] : []),
     ...(isAdmin ? [{ id: "data", label: "Data" }] : []),
+    ...(isAdmin ? [{ id: "embedding", label: "Embedding" }] : []),
   ];
 
   return (
@@ -572,6 +581,8 @@ function SettingsPageContent() {
             {activeTab === "billing" && <SubscriptionTab />}
 
             {activeTab === "data" && <DataManagementSettings />}
+
+            {activeTab === "embedding" && <EmbeddingSettings />}
           </div>
         </div>
       </div>

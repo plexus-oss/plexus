@@ -5,10 +5,15 @@
 
 ## What a key unlocks
 
-SSO / SAML / SCIM · RBAC and fine-grained permissions · audit logs ·
-multi-tenancy · the air-gapped signed release channel with CVE patch SLA ·
-support entitlements. All of that code is in this repo — the key switches it
-on. Everything else is free forever, uncapped, for any single team.
+RBAC and fine-grained permissions · the air-gapped signed release channel with
+CVE patch SLA · support entitlements. That code is in this repo — the key
+switches it on. Everything else is free forever, uncapped, for any single team.
+
+**Not yet available, and not part of a key today:** SSO / SAML / SCIM and
+per-tenant audit logs (with retention, tamper-evidence, and auditor-format
+export). These are not implemented in the product — do not build a purchase
+around them; ask us for current status first. (Plexus is multi-tenant at the
+organization boundary for everyone; that isn't a paid unlock.)
 
 ## Buying
 

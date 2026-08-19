@@ -42,6 +42,8 @@ export interface Axis {
   domain?: [number, number] | "auto";
   type?: "number" | "time";
   formatter?: (value: number) => string;
+  /** Optional finer formatter for the hover tooltip; falls back to `formatter`. */
+  tooltipFormatter?: (value: number) => string;
 }
 
 export interface Margin {

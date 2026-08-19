@@ -14,9 +14,12 @@ import type { TimeRange, DataFilter } from "@/lib/types/dashboard";
 import {
   substituteVariables,
   injectConditions,
+  dialectForConnectionType,
   type InjectedQuery,
+  type SqlDialect,
 } from "@/lib/transforms/connection-query";
 import { useSharedQueryContext } from "@/components/dashboard/shared-query-context";
+import { useSourcesSwr } from "@/hooks/use-sources-swr";
 
 // Re-export utilities for backward compatibility
 export {
@@ -89,6 +92,26 @@ interface FetcherArgs {
 }
 
 const PLEXUS_SOURCE_ID = "__plexus__";
+
+/**
+ * Resolve the SQL macro dialect for a source from its real connection type.
+ * The dialect must NOT be guessed from the source id — a customer's own
+ * ClickHouse or MySQL connection needs its own macro syntax, not Postgres.
+ * Reads the shared sources cache (already warm on any dashboard); defaults to
+ * Postgres until the source resolves, which the built-in telemetry store
+ * (ClickHouse) short-circuits.
+ */
+export function useSourceDialect(sourceId: string | null): SqlDialect {
+  const { sources } = useSourcesSwr();
+  return useMemo(() => {
+    if (sourceId === PLEXUS_SOURCE_ID) return "clickhouse";
+    if (!sourceId) return "postgres";
+    const source = sources.find(
+      (s) => s.id === sourceId || s.slug === sourceId,
+    );
+    return dialectForConnectionType(source?.connection_type);
+  }, [sources, sourceId]);
+}
 
 /** Query failure carrying the SQL that was executed (owner-authed only). */
 export class QueryError extends Error {
@@ -179,14 +202,12 @@ export function useConnectionQuery(options: UseConnectionQueryOptions) {
       ? { token: sharedCtx.shareToken, panelId, password: sharedCtx.password }
       : undefined;
 
+  // Resolve the macro dialect from the source's real connection type.
+  const dialect = useSourceDialect(sourceId);
+
   // Pipeline: substituteVariables → injectConditions
   const injected = useMemo(() => {
     if (!query.trim()) return { sql: query, params: [] as unknown[] };
-
-    // Dialect hint: the built-in Plexus telemetry source is ClickHouse; all
-    // other sources are Postgres-compatible today.
-    const dialect =
-      sourceId === PLEXUS_SOURCE_ID ? "clickhouse" : "postgres";
 
     // Step 1: Substitute $__timeFilter() macro and variables
     const result = substituteVariables(query, variables ?? {}, timeRange, dialect);
@@ -216,7 +237,7 @@ export function useConnectionQuery(options: UseConnectionQueryOptions) {
     valueColumn,
     seriesColumn,
     filters,
-    sourceId,
+    dialect,
   ]);
 
   const effectiveQuery = injected.sql;
@@ -374,17 +395,19 @@ export function useConnectionDataRange(options: {
 }): { earliest: string; latest: string } | null {
   const { sourceId, query, timeColumn, variables, enabled = true } = options;
   const sharedCtx = useSharedQueryContext();
+  const dialect = useSourceDialect(sourceId);
 
   const probe = useMemo(() => {
     if (!query.trim() || !timeColumn) return null;
-    const dialect = sourceId === PLEXUS_SOURCE_ID ? "clickhouse" : "postgres";
     // Neutralize $__timeFilter() (→ TRUE) so we see the full span, not the
     // windowed slice.
     const { sql } = substituteVariables(query, variables ?? {}, undefined, dialect);
     const inner = sql.replace(/;\s*$/, "").trim();
-    const col = `"${timeColumn}"`;
+    const col = dialect === "mysql"
+      ? "`" + timeColumn.replace(/`/g, "``") + "`"
+      : `"${timeColumn}"`;
     return `SELECT min(${col}) AS lo, max(${col}) AS hi FROM (\n${inner}\n) _probe`;
-  }, [query, timeColumn, variables, sourceId]);
+  }, [query, timeColumn, variables, dialect]);
 
   const shouldFetch = enabled && !sharedCtx && !!sourceId && !!probe;
   const swrKey = shouldFetch

@@ -233,7 +233,6 @@ export default function DashboardPage({ params }: DashboardPageProps) {
     [markDirty],
   );
 
-
   const handleAddPanel = useCallback(
     (panel: Panel) => {
       setLocalConfig((prev) => {
@@ -354,7 +353,11 @@ export default function DashboardPage({ params }: DashboardPageProps) {
       });
       // Fire-and-forget: classification samples the dashboard's current
       // window so the verdict matches what the panel will actually show.
-      void classifyAndRetypePanel(panelId, qualifiedMetric, cfg.timeRange.value);
+      void classifyAndRetypePanel(
+        panelId,
+        qualifiedMetric,
+        cfg.timeRange.value,
+      );
     },
     [handleAddPanel, classifyAndRetypePanel],
   );
@@ -740,8 +743,8 @@ export default function DashboardPage({ params }: DashboardPageProps) {
                   "h-7 w-7",
                   railOpen && "bg-muted text-foreground",
                 )}
-                aria-label={railOpen ? "Hide signal rail" : "Show signal rail"}
-                title="Signals"
+                aria-label={railOpen ? "Hide metrics rail" : "Show metrics rail"}
+                title="Metrics"
                 onClick={toggleRail}
               >
                 <PanelRight className="h-4 w-4" />
@@ -779,72 +782,76 @@ export default function DashboardPage({ params }: DashboardPageProps) {
 
   const mainContent = (
     <>
-      {toolbarRow}
-      {config.panels.length > 0 && displaySettings?.showScrubber !== false ? (
-        <MiniScrubber
-          panels={config.panels}
-          timeRange={config.timeRange}
-          onTimeRangeChange={handleTimeRangeChange}
-        />
-      ) : null}
-      <div className="flex">
-        <div className="flex-1 flex min-h-0">
-          <div
-            className={cn(
-              "flex-1 p-1 transition-colors",
-              metricDragOverEmpty && "rounded-md bg-primary/5",
-            )}
-            onDragOver={canEdit ? handleEmptyDragOver : undefined}
-            onDragLeave={canEdit ? handleEmptyDragLeave : undefined}
-            onDrop={canEdit ? handleEmptyDrop : undefined}
-          >
-            {config.panels.length === 0 ? (
-              <EmptyDashboardState onAddPanel={() => setShowAddPanel(true)} />
-            ) : (
-              <DashboardGrid
-                config={config}
-                onConfigChange={handleConfigChange}
-                isEditing={canEdit}
-                onPanelSelect={canEdit ? handlePanelSelect : undefined}
-                selectedPanelId={canEdit ? selectedPanelId : null}
-                onMetricDrop={canEdit ? handleAddMetricToPanel : undefined}
-              />
-            )}
-          </div>
+      {/* Full-height column: only the grid column scrolls, so the edit
+          sidebar and signal rail stay pinned with their own scrollbars. */}
+      <div className="flex h-full flex-col">
+        {toolbarRow}
+        {config.panels.length > 0 && displaySettings?.showScrubber !== false ? (
+          <MiniScrubber
+            panels={config.panels}
+            timeRange={config.timeRange}
+            onTimeRangeChange={handleTimeRangeChange}
+          />
+        ) : null}
+        <div className="flex min-h-0 flex-1">
+          <div className="flex-1 flex min-h-0">
+            <div
+              className={cn(
+                "flex-1 overflow-y-auto p-1 transition-colors",
+                metricDragOverEmpty && "rounded-md bg-primary/5",
+              )}
+              onDragOver={canEdit ? handleEmptyDragOver : undefined}
+              onDragLeave={canEdit ? handleEmptyDragLeave : undefined}
+              onDrop={canEdit ? handleEmptyDrop : undefined}
+            >
+              {config.panels.length === 0 ? (
+                <EmptyDashboardState onAddPanel={() => setShowAddPanel(true)} />
+              ) : (
+                <DashboardGrid
+                  config={config}
+                  onConfigChange={handleConfigChange}
+                  isEditing={canEdit}
+                  onPanelSelect={canEdit ? handlePanelSelect : undefined}
+                  selectedPanelId={canEdit ? selectedPanelId : null}
+                  onMetricDrop={canEdit ? handleAddMetricToPanel : undefined}
+                />
+              )}
+            </div>
 
-          <div
-            className={`overflow-hidden transition-all duration-100 ease-out ${
-              selectedPanel ? "w-[400px]" : "w-0"
-            }`}
-            onTransitionEnd={() => {
-              if (!selectedPanel) setLastPanel(null);
-            }}
-          >
-            {selectedPanel || lastPanel ? (
-              <PanelEditSidebar
-                panel={(selectedPanel || lastPanel)!}
-                onClose={handlePanelDeselect}
-                onUpdate={handlePanelUpdate}
-                onDelete={handlePanelDelete}
-                timeRange={config.timeRange}
-              />
-            ) : null}
-          </div>
+            <div
+              className={`overflow-hidden transition-all duration-100 ease-out ${
+                selectedPanel ? "w-[400px]" : "w-0"
+              }`}
+              onTransitionEnd={() => {
+                if (!selectedPanel) setLastPanel(null);
+              }}
+            >
+              {selectedPanel || lastPanel ? (
+                <PanelEditSidebar
+                  panel={(selectedPanel || lastPanel)!}
+                  onClose={handlePanelDeselect}
+                  onUpdate={handlePanelUpdate}
+                  onDelete={handlePanelDelete}
+                  timeRange={config.timeRange}
+                />
+              ) : null}
+            </div>
 
-          {/* Signal rail — drag-a-metric composition */}
-          <div
-            className={`shrink-0 overflow-hidden transition-all duration-100 ease-out ${
-              canEdit && railOpen ? "w-[280px]" : "w-0"
-            }`}
-          >
-            {canEdit && railOpen ? (
-              <SignalRail
-                panels={config.panels}
-                onAddToPanel={handleAddMetricToPanel}
-                onCreatePanel={handleCreatePanelFromMetric}
-                onClose={toggleRail}
-              />
-            ) : null}
+            {/* Signal rail — drag-a-metric composition */}
+            <div
+              className={`shrink-0 overflow-hidden transition-all duration-100 ease-out ${
+                canEdit && railOpen ? "w-[280px]" : "w-0"
+              }`}
+            >
+              {canEdit && railOpen ? (
+                <SignalRail
+                  panels={config.panels}
+                  onAddToPanel={handleAddMetricToPanel}
+                  onCreatePanel={handleCreatePanelFromMetric}
+                  onClose={toggleRail}
+                />
+              ) : null}
+            </div>
           </div>
         </div>
       </div>

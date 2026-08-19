@@ -8,7 +8,7 @@ import {
   useRef,
   useCallback,
 } from "react";
-import { UnifiedChart } from "@/components/ui/charts/unified-chart";
+import { PanelChart, binarySearchClosestX } from "@/components/panel/panel-chart";
 import { usePanelData } from "@/hooks/use-panel-data";
 import { PanelRestrictedState } from "./restricted-state";
 import { useUserSettings } from "@/context/user-settings-context";
@@ -71,7 +71,6 @@ import {
 } from "@/hooks/use-comparison-series";
 import { useSharedQueryContext } from "@/components/dashboard/shared-query-context";
 import { useChartDomain } from "@/hooks/use-chart-domain";
-import { useChartPanZoom } from "@/hooks/use-chart-pan-zoom";
 import { sliceSeriesToWindow } from "@/lib/data-utils";
 import type { TelemetryData } from "@/components/dashboard/telemetry-provider";
 import { useReferenceLines } from "@/hooks/use-reference-lines";
@@ -104,33 +103,6 @@ const Y_TICK_FONT = "12px -apple-system, BlinkMacSystemFont, sans-serif";
 // allocate a fresh `{}` each render — that would invalidate useChartSeries's
 // baseSeries memo every render (metricColors is in its deps).
 const EMPTY_METRIC_COLORS: Record<string, string> = {};
-
-/** Binary search for closest point by x — O(log n) */
-function binarySearchClosestX(
-  data: Array<{ x: number; y: number }>,
-  targetX: number,
-  maxDistance: number,
-): { x: number; y: number } | null {
-  if (data.length === 0) return null;
-  let left = 0;
-  let right = data.length - 1;
-  while (left < right) {
-    const mid = Math.floor((left + right) / 2);
-    if (data[mid].x < targetX) left = mid + 1;
-    else right = mid;
-  }
-  let closestPoint: { x: number; y: number } | null = null;
-  let closestDist = Infinity;
-  for (const idx of [left - 1, left, left + 1]) {
-    if (idx < 0 || idx >= data.length) continue;
-    const dist = Math.abs(data[idx].x - targetX);
-    if (dist < closestDist && dist <= maxDistance) {
-      closestDist = dist;
-      closestPoint = data[idx];
-    }
-  }
-  return closestPoint;
-}
 
 /** True when a telemetry snapshot holds at least one point in any series. */
 function telemetryHasPoints(data: TelemetryData | null | undefined): boolean {
@@ -556,18 +528,7 @@ export function ChartPanel({
     [chartMarginLeft],
   );
 
-  const { isPanning, brushRect } = useChartPanZoom({
-    containerRef: chartContainerRef,
-    timeRange,
-    enabled: ann.mode !== "on",
-    setViewWindow,
-    onTimeRangeChange: handlePanZoomChange,
-    // Double-click / Escape restores the pre-zoom TimeRange directly, so a
-    // relative range ("last 15m") goes back to being live after zooming.
-    onTimeRangeReset: contextTimeRangeChange,
-    onPanStart: handlePanStart,
-    margin: chartMargin,
-  });
+  // Pan/zoom + hover crosshair both live in <PanelChart> now (config below).
 
   const showLimits =
     panel.config.showLimits ??
@@ -748,52 +709,8 @@ export function ChartPanel({
     chartMargin,
   ]);
 
-  // Crosshair — suppressed during active pan to avoid fighting the shifting domain
-  const handleChartMouseMove = useCallback(
-    (e: React.MouseEvent<HTMLDivElement>) => {
-      if (!showCrosshair || isPanning.current) return;
-      const rect = chartContainerRef.current?.getBoundingClientRect();
-      if (!rect) return;
-      const iw = rect.width - chartMargin.left - chartMargin.right;
-      if (iw <= 0 || !xDomain) return;
-      const x = Math.max(
-        chartMargin.left,
-        Math.min(e.clientX - rect.left, rect.width - chartMargin.right),
-      );
-      const absTime =
-        xDomain[0] + ((x - chartMargin.left) / iw) * (xDomain[1] - xDomain[0]);
-      setHoveredTimestamp(new Date(absTime).toISOString());
-      const xRange = xDomain[1] - xDomain[0];
-      const values: HoveredValue[] = [];
-      for (const s of timeSeries) {
-        const closest = binarySearchClosestX(s.data, absTime, xRange * 0.05);
-        if (closest)
-          values.push({ name: s.name, value: closest.y, color: s.color });
-      }
-      for (const s of ghostSeries) {
-        const closest = binarySearchClosestX(s.data, absTime, xRange * 0.05);
-        if (closest)
-          values.push({ name: s.name, value: closest.y, color: s.color });
-      }
-      if (values.length > 0) setHoveredValues(panel.id, values);
-    },
-    [
-      showCrosshair,
-      isPanning,
-      xDomain,
-      timeSeries,
-      ghostSeries,
-      setHoveredTimestamp,
-      setHoveredValues,
-      panel.id,
-      chartMargin,
-    ],
-  );
-
-  const handleChartMouseLeave = useCallback(() => {
-    setHoveredTimestamp(null);
-    clearHoveredValues(panel.id);
-  }, [setHoveredTimestamp, clearHoveredValues, panel.id]);
+  // Hover crosshair moved into <PanelChart> (it reads the gesture's isPanning
+  // directly there). chart-panel injects the hover state/series/callbacks below.
 
   // ── Pinned time tracker ──
   // A plain click (no drag, no modifiers) pins a shared tracker at the clicked
@@ -1083,9 +1000,26 @@ export function ChartPanel({
   return (
     <>
       <div className="h-full flex flex-col">
-        <div
-          ref={setChartContainer}
-          className={cn(
+        <PanelChart
+          type={chartType}
+          series={seriesForChart}
+          margin={chartMargin}
+          showGrid={showGrid}
+          showXAxis={showXAxis}
+          showYAxis={showYAxis}
+          showTooltip={ann.mode !== "on"}
+          smooth={panel.config.smoothLines !== false}
+          showDataPoints={panel.config.showDataPoints === true}
+          showLegend={panel.config.showLegend ?? activeSeries.length > 1}
+          xAxis={chartType === "bar" ? undefined : xAxisConfig}
+          yAxis={yAxisConfig}
+          referenceLines={
+            referenceLines.length > 0 ? referenceLines : undefined
+          }
+          stacked={panel.config.stacked}
+          orientation={panel.config.orientation || "vertical"}
+          containerRef={setChartContainer}
+          containerClassName={cn(
             "relative select-none flex-1 min-h-0",
             ann.mode === "on"
               ? "cursor-cell"
@@ -1093,13 +1027,11 @@ export function ChartPanel({
                 ? "cursor-crosshair"
                 : "",
           )}
-          style={{ minHeight: 150 }}
+          containerStyle={{ minHeight: 150 }}
           onMouseMove={(e) => {
-            handleChartMouseMove(e);
             if (ann.mode === "on") handleAnnotationMouseMove(e);
           }}
           onMouseLeave={() => {
-            handleChartMouseLeave();
             if (dragStartRef.current) {
               dragStartRef.current = null;
               ann.setIsDragging(false);
@@ -1114,28 +1046,36 @@ export function ChartPanel({
           }}
           onPointerDown={handleChartPointerDown}
           onClick={handleChartClick}
-        >
-          <UnifiedChart
-            type={chartType}
-            series={seriesForChart}
-            width="100%"
-            height="100%"
-            margin={chartMargin}
-            showGrid={showGrid}
-            showXAxis={showXAxis}
-            showYAxis={showYAxis}
-            showTooltip={ann.mode !== "on"}
-            smooth={panel.config.smoothLines !== false}
-            showDataPoints={panel.config.showDataPoints === true}
-            showLegend={panel.config.showLegend ?? activeSeries.length > 1}
-            xAxis={chartType === "bar" ? undefined : xAxisConfig}
-            yAxis={yAxisConfig}
-            referenceLines={
-              referenceLines.length > 0 ? referenceLines : undefined
-            }
-            stacked={panel.config.stacked}
-            orientation={panel.config.orientation || "vertical"}
-          />
+          geometry={{
+            xDomain: xDomain ?? null,
+            innerWidth,
+            innerHeight,
+            chartSize,
+            formatter: xAxisConfig.formatter,
+          }}
+          panZoom={{
+            timeRange,
+            enabled: ann.mode !== "on",
+            setViewWindow,
+            onTimeRangeChange: handlePanZoomChange,
+            onTimeRangeReset: contextTimeRangeChange,
+            onPanStart: handlePanStart,
+          }}
+          hover={{
+            showCrosshair,
+            syncTooltips,
+            hoveredTimestamp,
+            timeSeries,
+            ghostSeries,
+            onHover: setHoveredTimestamp,
+            onHoverValues: (values) => setHoveredValues(panel.id, values),
+            onClearHover: () => {
+              setHoveredTimestamp(null);
+              clearHoveredValues(panel.id);
+            },
+          }}
+          overlay={
+            <>
 
           {streamRateHz !== null && (
             <div
@@ -1149,102 +1089,6 @@ export function ChartPanel({
               Hz
             </div>
           )}
-
-          {brushRect &&
-            xDomain &&
-            innerWidth > 0 &&
-            (() => {
-              const xRange = xDomain[1] - xDomain[0];
-              const tStart =
-                xDomain[0] +
-                ((brushRect.left - chartMargin.left) / innerWidth) * xRange;
-              const tEnd = tStart + (brushRect.width / innerWidth) * xRange;
-              const durMs = Math.max(0, tEnd - tStart);
-              const fmtDur = (ms: number) => {
-                if (ms < 1000) return `${Math.round(ms)}ms`;
-                if (ms < 60_000) return `${(ms / 1000).toFixed(1)}s`;
-                if (ms < 3_600_000) return `${(ms / 60_000).toFixed(1)}m`;
-                if (ms < 86_400_000) return `${(ms / 3_600_000).toFixed(1)}h`;
-                return `${(ms / 86_400_000).toFixed(1)}d`;
-              };
-              return (
-                <>
-                  <div
-                    className="absolute pointer-events-none z-10 bg-primary/15 border-x-2 border-primary"
-                    style={{
-                      left: brushRect.left,
-                      top: chartMargin.top,
-                      width: brushRect.width,
-                      height: innerHeight,
-                    }}
-                  />
-                  {brushRect.width > 4 && (
-                    <>
-                      <div
-                        className="absolute pointer-events-none z-20 text-[10px] font-mono px-1.5 py-0.5 rounded bg-primary text-primary-foreground whitespace-nowrap"
-                        style={{
-                          left: brushRect.left + brushRect.width / 2,
-                          top: chartMargin.top + 4,
-                          transform: "translateX(-50%)",
-                        }}
-                      >
-                        {fmtDur(durMs)}
-                      </div>
-                      <div
-                        className="absolute pointer-events-none z-20 text-[10px] font-mono px-1 py-0.5 rounded bg-background/90 border border-border text-foreground whitespace-nowrap"
-                        style={{
-                          left: brushRect.left,
-                          top: chartMargin.top + innerHeight + 2,
-                          transform: "translateX(-50%)",
-                        }}
-                      >
-                        {xAxisConfig.formatter(tStart)}
-                      </div>
-                      <div
-                        className="absolute pointer-events-none z-20 text-[10px] font-mono px-1 py-0.5 rounded bg-background/90 border border-border text-foreground whitespace-nowrap"
-                        style={{
-                          left: brushRect.left + brushRect.width,
-                          top: chartMargin.top + innerHeight + 2,
-                          transform: "translateX(-50%)",
-                        }}
-                      >
-                        {xAxisConfig.formatter(tEnd)}
-                      </div>
-                    </>
-                  )}
-                </>
-              );
-            })()}
-
-          {/* Synced crosshair from other panels */}
-          {syncTooltips &&
-            hoveredTimestamp &&
-            xDomain &&
-            innerWidth > 0 &&
-            (() => {
-              const hoverMs = new Date(hoveredTimestamp).getTime();
-              const xRange = xDomain[1] - xDomain[0];
-              if (xRange <= 0) return null;
-              const px =
-                chartMargin.left +
-                ((hoverMs - xDomain[0]) / xRange) * innerWidth;
-              if (
-                px < chartMargin.left ||
-                px > chartSize.width - chartMargin.right
-              )
-                return null;
-              return (
-                <div
-                  className="absolute pointer-events-none z-10 bg-muted-foreground/40"
-                  style={{
-                    left: px,
-                    top: chartMargin.top,
-                    width: 1,
-                    height: innerHeight,
-                  }}
-                />
-              );
-            })()}
 
           {/* Pinned time tracker — solid accent line (vs the hairline hover
               crosshair), per-series readout, and Δt to the hovered time.
@@ -1414,7 +1258,9 @@ export function ChartPanel({
               ))}
             </div>
           )}
-        </div>
+            </>
+          }
+        />
 
         {/* Bottom bar */}
         <div className="flex items-center justify-between px-2 py-1 border-t border-border bg-muted/30 shrink-0">

@@ -2297,3 +2297,72 @@ export const usageMonthly = pgView("usage_monthly", {
   .as(
     sql`SELECT org_id, date_trunc('month'::text, period_start::timestamp with time zone) AS month, sum(data_points_ingested) AS total_data_points, sum(bytes_ingested) AS total_bytes, max(devices_active) AS peak_devices, sum(sessions_created) AS total_sessions FROM usage GROUP BY org_id, (date_trunc('month'::text, period_start::timestamp with time zone))`,
   );
+
+// Browser origins an org may render embedded panels from. Self-service (managed
+// in Settings), but each must prove domain ownership via a DNS TXT record
+// (Vercel/Resend style) before it counts — an unverified row never authorizes
+// CORS. Enforced by the embed data plane: a request's Origin must match a
+// VERIFIED row for the embed token's org.
+export const embedOrigins = pgTable(
+  "embed_origins",
+  {
+    id: uuid().defaultRandom().primaryKey().notNull(),
+    org_id: text("org_id").notNull(),
+    // Normalized browser origin: scheme://host[:port], lowercased host, no path.
+    origin: text().notNull(),
+    // Host we verify ownership of (the origin's hostname).
+    domain: text().notNull(),
+    verification_token: text("verification_token").notNull(),
+    // Null until the DNS TXT check passes; set on successful verify.
+    verified_at: timestamp("verified_at", { withTimezone: true, mode: "string" }),
+    created_by: text("created_by"),
+    created_at: timestamp("created_at", { withTimezone: true, mode: "string" })
+      .defaultNow()
+      .notNull(),
+    updated_at: timestamp("updated_at", { withTimezone: true, mode: "string" })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    index("idx_embed_origins_org").using(
+      "btree",
+      table.org_id.asc().nullsLast(),
+    ),
+    unique("embed_origins_org_origin_key").on(table.org_id, table.origin),
+  ],
+).enableRLS();
+
+// Durable, revocable "published embeds": a stable read-only token scoped to one
+// panel that a customer pastes directly (no backend mint) or iframes. Public by
+// design (it lives in the customer's HTML), so the token is stored as-is; damage
+// is bounded — read-only, single panel, and gated to VERIFIED origins by CORS.
+// Revoke = set revoked_at. See lib/embed/publish.ts.
+export const embedPublishes = pgTable(
+  "embed_publishes",
+  {
+    id: uuid().defaultRandom().primaryKey().notNull(),
+    org_id: text("org_id").notNull(),
+    dashboard_id: text("dashboard_id").notNull(),
+    panel_id: text("panel_id").notNull(),
+    // Public opaque token (emb_...). Unique; looked up on every embed read.
+    token: text().notNull(),
+    label: text(),
+    // Optional default window for the embed (relative like "24h" or ISO range).
+    time_range: text("time_range"),
+    created_by: text("created_by"),
+    created_at: timestamp("created_at", { withTimezone: true, mode: "string" })
+      .defaultNow()
+      .notNull(),
+    // Null = active; set = revoked (embed stops loading).
+    revoked_at: timestamp("revoked_at", { withTimezone: true, mode: "string" }),
+  },
+  (table) => [
+    index("idx_embed_publishes_panel").using(
+      "btree",
+      table.org_id.asc().nullsLast(),
+      table.dashboard_id.asc().nullsLast(),
+      table.panel_id.asc().nullsLast(),
+    ),
+    unique("embed_publishes_token_key").on(table.token),
+  ],
+).enableRLS();
